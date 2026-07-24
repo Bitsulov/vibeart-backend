@@ -1,6 +1,8 @@
 package ru.vibeart.api.models.entities;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 
 /**
  * Сущность жалобы пользователя на пост.
@@ -38,6 +40,7 @@ public class Report extends BaseEntity {
 
     @ManyToOne
     @JoinColumn(name = "post_id", nullable = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     public Post getPost() {
         return post;
     }

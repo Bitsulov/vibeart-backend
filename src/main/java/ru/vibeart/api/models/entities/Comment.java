@@ -1,6 +1,8 @@
 package ru.vibeart.api.models.entities;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 
 import java.time.Instant;
 
@@ -37,6 +39,7 @@ public class Comment extends BaseEntity {
 
     @ManyToOne
     @JoinColumn(name = "post_id", nullable = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     public Post getPost() {
         return post;
     }

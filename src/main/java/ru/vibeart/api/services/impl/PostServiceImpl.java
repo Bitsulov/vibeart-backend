@@ -657,6 +657,7 @@ public class PostServiceImpl implements PostService {
      * @throws ServiceException если произошла ошибка базы данных, удаления изображения или сервера
      */
     @Override
+    @Transactional
     public void deletePostByUuid(UUID postId) {
         UUID userId = authUtil.getPrincipalUuid();
 
