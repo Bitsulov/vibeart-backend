@@ -1,6 +1,8 @@
 package ru.vibeart.api.models.entities;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import ru.vibeart.api.models.enums.AIStatus;
 import ru.vibeart.api.models.enums.NSFWStatus;
 
@@ -25,7 +27,9 @@ import java.util.UUID;
  * <ul>
  *   <li>{@link Tag} — теги поста (ManyToMany, владелец связи; join-таблица {@code post_tags});</li>
  *   <li>{@link Album} — альбомы, в которые включён пост (ManyToMany, обратная сторона);</li>
- *   <li>{@link Like} — лайки поста (OneToMany, cascade ALL + orphanRemoval — удаляются вместе с постом).</li>
+ *   <li>{@link Like} — лайки поста (OneToMany, cascade ALL + orphanRemoval — удаляются вместе с постом);</li>
+ *   <li>{@link Report} — жалобы на пост (OneToMany, cascade ALL + orphanRemoval — удаляются вместе с постом);</li>
+ *   <li>{@link Comment} — комментарии к посту (OneToMany, cascade ALL + orphanRemoval — удаляются вместе с постом).</li>
  * </ul>
  */
 @Entity
@@ -46,6 +50,8 @@ public class Post extends BaseEntity {
     private List<Tag> tags;
     private List<Album> albums;
     private List<Like> likes;
+    private List<Report> reports;
+    private List<Comment> comments;
 
     public Post() {}
 
@@ -155,6 +161,7 @@ public class Post extends BaseEntity {
         joinColumns = @JoinColumn(name = "post_id"),
         inverseJoinColumns = @JoinColumn(name = "tag_id")
     )
+    @OnDelete(action = OnDeleteAction.CASCADE)
     public List<Tag> getTags() {
         return tags;
     }
@@ -176,5 +183,21 @@ public class Post extends BaseEntity {
     }
     public void setLikes(List<Like> likes) {
         this.likes = likes;
+    }
+
+    @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
+    public List<Report> getReports() {
+        return reports;
+    }
+    public void setReports(List<Report> reports) {
+        this.reports = reports;
+    }
+
+    @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
+    public List<Comment> getComments() {
+        return comments;
+    }
+    public void setComments(List<Comment> comments) {
+        this.comments = comments;
     }
 }

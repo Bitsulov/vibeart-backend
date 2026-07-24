@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "ru.vibeart"
-version = "0.2.0-SNAPSHOT"
+version = "0.2.1-SNAPSHOT"
 description = "REST API backend for VibeArt project"
 
 java {
