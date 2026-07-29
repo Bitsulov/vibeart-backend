@@ -8,13 +8,12 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.UUID;
 
-@Schema(description = "Часть запроса создания пользователя с JSON данными")
+@Schema(description = "Часть запроса создания публикации с JSON данными")
 public class PostCreateDetails {
     private String title;
     private String description;
     private UUID authorUuid;
     private List<String> tagsTitles;
-    private boolean isUserCreated;
 
     @Schema(description = "Заголовок публикации", example = "Название")
     @NotBlank(message = "Title cannot be empty")
@@ -51,13 +50,5 @@ public class PostCreateDetails {
     }
     public void setTagsTitles(List<String> tagsTitles) {
         this.tagsTitles = tagsTitles;
-    }
-
-    @Schema(description = "Признак того, что публикация создана пользователем, а не сообществом", example = "true")
-    public boolean isUserCreated() {
-        return isUserCreated;
-    }
-    public void setUserCreated(boolean userCreated) {
-        isUserCreated = userCreated;
     }
 }

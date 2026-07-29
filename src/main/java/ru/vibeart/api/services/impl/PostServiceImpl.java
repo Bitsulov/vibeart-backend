@@ -29,6 +29,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -276,8 +277,7 @@ public class PostServiceImpl implements PostService {
      *
      * <h2>Назначение</h2>
      * <p>
-     *     Создаёт публикацию от имени пользователя или сообщества в зависимости от флага
-     *     {@code isUserCreated} в {@link PostCreateDetails}, загружает изображение через
+     *     Создаёт публикацию от имени пользователя или сообщества, загружает изображение через
      *     {@link ImageUploaderService} и привязывает теги по названиям через {@link TagRepository}.
      * </p>
      *
@@ -322,32 +322,34 @@ public class PostServiceImpl implements PostService {
 
         try {
             Post post = modelMapper.map(postCreateDetails, Post.class);
+            UUID postAuthorUuid = postCreateDetails.getAuthorUuid();
 
-            if(postCreateDetails.isUserCreated()) {
-                if (!postCreateDetails.getAuthorUuid().equals(authorId)) {
-                    log.warn("Create post warn: client is not author, client UUID={}", authorId);
-                    throw new ForbiddenException("You cannot create a post as another user");
-                }
+            Optional<User> user = userRepository.findByUuid(postAuthorUuid);
+            Optional<Community> community = communityRepository.findByUuid(postAuthorUuid);
+            boolean isUser = user.isPresent();
+            boolean isCommunity = community.isPresent();
 
-                User user = userRepository.findByUuid(postCreateDetails.getAuthorUuid())
-                        .orElseThrow(() -> new ResourceNotFoundException("Author user not found. Check isUserCreated is right"));
-                post.setAuthorUser(user);
-                post.setAuthorCommunity(null);
-            } else {
-                Community community = communityRepository.findByUuid(postCreateDetails.getAuthorUuid())
-                        .orElseThrow(() -> new ResourceNotFoundException("Author community not found. Check isUserCreated is right"));
-
-                boolean isOwnerOrAdmin = community.getOwner().getUuid().equals(authorId) ||
-                        community.getAdmins().stream().anyMatch(admin -> admin.getUuid().equals(authorId));
+            if(isUser && isCommunity) {
+                log.error("Creating post error: author UUID belongs to user and community, UUID={}", postAuthorUuid);
+                throw new ServiceException("Author of post not found");
+            } else if(!isUser && !isCommunity) {
+                log.warn("Creating post warn: author not found, passed UUID={}", postAuthorUuid);
+                throw new ResourceNotFoundException("Author of post not found");
+            } else if(isUser && !user.get().getUuid().equals(authorId)) {
+                log.warn("Create post warn: client is not author, client UUID={}", authorId);
+                throw new ForbiddenException("You cannot create a post as another user");
+            } else if(isCommunity) {
+                boolean isOwnerOrAdmin = community.get().getOwner().getUuid().equals(authorId) ||
+                        community.get().getAdmins().stream().anyMatch(admin -> admin.getUuid().equals(authorId));
 
                 if(!isOwnerOrAdmin) {
                     log.warn("Create post warn: client is not community owner or admin, client UUID={}", authorId);
                     throw new ForbiddenException("You cannot create a post as this community");
                 }
-
-                post.setAuthorCommunity(community);
-                post.setAuthorUser(null);
             }
+
+            post.setAuthorUser(user.orElse(null));
+            post.setAuthorCommunity(community.orElse(null));
 
             String imageUrl = imageUploaderService.uploadImage(file);
             post.setImageUrl(imageUrl);
@@ -379,7 +381,7 @@ public class PostServiceImpl implements PostService {
                             null);
             response.setTags(post.getTags().stream().map(Tag::getTitle).toList());
             return response;
-        } catch (ResourceNotFoundException | ForbiddenException ex) {
+        } catch (ResourceNotFoundException | ForbiddenException | ServiceException ex) {
             throw ex;
         } catch (IOException ex) {
             log.error("Image load error during creating post, user UUID={}", authorId, ex);
