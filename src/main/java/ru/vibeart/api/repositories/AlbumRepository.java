@@ -1,5 +1,7 @@
 package ru.vibeart.api.repositories;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import ru.vibeart.api.models.entities.Album;
 
@@ -42,4 +44,22 @@ public interface AlbumRepository extends JpaRepository<Album, Long> {
      * @return {@link Optional}, содержащий найденный альбом, если он существует
      */
     Optional<Album> findByUuid(UUID uuid);
+
+    /**
+     * Ищет альбомы пользователя по его UUID
+     *
+     * @param userUuid UUID пользователя
+     * @param pageable параметры пагинации
+     * @return список альбомов, имеющихся у пользователя
+     */
+    Page<Album> findAllByAuthorUserUuid(UUID userUuid, Pageable pageable);
+
+    /**
+     * Ищет альбомы сообщества по его UUID
+     *
+     * @param communityUuid UUID сообщества
+     * @param pageable параметры пагинации
+     * @return список альбомов, имеющихся у сообщества
+     */
+    Page<Album> findAllByAuthorCommunityUuid(UUID communityUuid, Pageable pageable);
 }

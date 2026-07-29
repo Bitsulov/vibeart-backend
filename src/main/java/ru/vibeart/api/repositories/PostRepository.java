@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import ru.vibeart.api.models.entities.Post;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -81,6 +82,14 @@ public interface PostRepository extends JpaRepository<Post, Long> {
      * @return {@link Optional}, содержащий найденную публикацию, если она существует
      */
     Optional<Post> findByUuid(UUID uuid);
+
+    /**
+     * Ищет публикации по списку UUID.
+     *
+     * @param uuids список UUID публикаций
+     * @return список найденных публикаций
+     */
+    List<Post> findAllByUuidIn(List<UUID> uuids);
 
     /**
      * Ищет публикацию по UUID и блокирует найденную строку до конца транзакции,
