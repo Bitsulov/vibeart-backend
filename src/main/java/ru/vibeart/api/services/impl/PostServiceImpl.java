@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -202,6 +204,82 @@ public class PostServiceImpl implements PostService {
     }
 
     /**
+     * <h1>Полнотекстовый поиск публикаций</h1>
+     *
+     * <h2>Назначение</h2>
+     * <p>
+     *     Ищет публикации по заголовку и описанию через полнотекстовый поиск PostgreSQL
+     *     ({@link PostRepository#searchFullText(String, Pageable)}), результаты отсортированы
+     *     по релевантности запросу. Сортировка, переданная в {@code pageable}, не используется —
+     *     из него берутся только номер страницы и размер.
+     * </p>
+     *
+     * <h3>Исключения:</h3>
+     * <ul>
+     *     <li>
+     *         Если аутентифицированный пользователь не найден, выбрасывается
+     *         {@link ResourceNotFoundException} с кодом ответа <b>404</b>
+     *     </li>
+     *     <li>
+     *         При ошибке базы данных или любой другой ошибке, выбрасывается {@link ServiceException}
+     *         с кодом ответа <b>500</b>
+     *     </li>
+     * </ul>
+     *
+     * @param query поисковый запрос
+     * @param pageable параметры пагинации (номер страницы и размер; сортировка не используется)
+     * @return страница с найденными публикациями, отсортированными по релевантности
+     * @throws ResourceNotFoundException если аутентифицированный пользователь не найден
+     * @throws ServiceException если произошла ошибка базы данных или сервера
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PostResponse> getPostsBySearch(String query, Pageable pageable) {
+        boolean isAuthenticated = authUtil.getIsAuthenticated();
+
+        try {
+            User currentUser = null;
+            if(isAuthenticated) {
+                UUID userId = authUtil.getPrincipalUuid();
+                currentUser = userRepository.findByUuid(userId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Principal user not found"));
+            }
+
+            Pageable unsortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
+            Page<Post> posts = postRepository.searchFullText(query, unsortedPageable);
+
+            Set<Long> likedPostIds = isAuthenticated ?
+                    new HashSet<>(likeRepository.findActiveLikedPostIds(currentUser, posts.getContent())) :
+                    Set.of();
+            Set<Long> reportedPostIds = isAuthenticated ?
+                    new HashSet<>(reportRepository.findReportedPostIds(currentUser, posts.getContent())) :
+                    Set.of();
+
+            return posts.map(post -> {
+                PostResponse response = modelMapper.map(post, PostResponse.class);
+                response.setAuthor(
+                        post.getAuthorUser() != null ? modelMapper.map(post.getAuthorUser(), UserResponse.class) : null
+                );
+                response.setCommunity(
+                        post.getAuthorCommunity() != null ? modelMapper.map(post.getAuthorCommunity(), CommunityResponse.class) : null
+                );
+                response.setTags(post.getTags().stream().map(Tag::getTitle).toList());
+                response.setLiked(likedPostIds.contains(post.getId()));
+                response.setReported(reportedPostIds.contains(post.getId()));
+                return response;
+            });
+        } catch (ResourceNotFoundException ex) {
+            throw ex;
+        } catch (DataAccessException ex) {
+            log.error("Database error during searching posts, query={}", query, ex);
+            throw new ServiceException("Database error searching posts", ex);
+        } catch (Exception ex) {
+            log.error("Unexpected error during searching posts, query={}", query, ex);
+            throw new ServiceException("Unexpected error searching posts", ex);
+        }
+    }
+
+    /**
      * <h1>Получение публикации по UUID</h1>
      *
      * <h2>Назначение</h2>
@@ -276,8 +354,7 @@ public class PostServiceImpl implements PostService {
      *
      * <h2>Назначение</h2>
      * <p>
-     *     Создаёт публикацию от имени пользователя или сообщества в зависимости от флага
-     *     {@code isUserCreated} в {@link PostCreateDetails}, загружает изображение через
+     *     Создаёт публикацию от имени пользователя или сообщества, загружает изображение через
      *     {@link ImageUploaderService} и привязывает теги по названиям через {@link TagRepository}.
      * </p>
      *
@@ -322,32 +399,34 @@ public class PostServiceImpl implements PostService {
 
         try {
             Post post = modelMapper.map(postCreateDetails, Post.class);
+            UUID postAuthorUuid = postCreateDetails.getAuthorUuid();
 
-            if(postCreateDetails.isUserCreated()) {
-                if (!postCreateDetails.getAuthorUuid().equals(authorId)) {
-                    log.warn("Create post warn: client is not author, client UUID={}", authorId);
-                    throw new ForbiddenException("You cannot create a post as another user");
-                }
+            Optional<User> user = userRepository.findByUuid(postAuthorUuid);
+            Optional<Community> community = communityRepository.findByUuid(postAuthorUuid);
+            boolean isUser = user.isPresent();
+            boolean isCommunity = community.isPresent();
 
-                User user = userRepository.findByUuid(postCreateDetails.getAuthorUuid())
-                        .orElseThrow(() -> new ResourceNotFoundException("Author user not found. Check isUserCreated is right"));
-                post.setAuthorUser(user);
-                post.setAuthorCommunity(null);
-            } else {
-                Community community = communityRepository.findByUuid(postCreateDetails.getAuthorUuid())
-                        .orElseThrow(() -> new ResourceNotFoundException("Author community not found. Check isUserCreated is right"));
-
-                boolean isOwnerOrAdmin = community.getOwner().getUuid().equals(authorId) ||
-                        community.getAdmins().stream().anyMatch(admin -> admin.getUuid().equals(authorId));
+            if(isUser && isCommunity) {
+                log.error("Creating post error: author UUID belongs to user and community, UUID={}", postAuthorUuid);
+                throw new ServiceException("Author of post not found");
+            } else if(!isUser && !isCommunity) {
+                log.warn("Creating post warn: author not found, passed UUID={}", postAuthorUuid);
+                throw new ResourceNotFoundException("Author of post not found");
+            } else if(isUser && !user.get().getUuid().equals(authorId)) {
+                log.warn("Create post warn: client is not author, client UUID={}", authorId);
+                throw new ForbiddenException("You cannot create a post as another user");
+            } else if(isCommunity) {
+                boolean isOwnerOrAdmin = community.get().getOwner().getUuid().equals(authorId) ||
+                        community.get().getAdmins().stream().anyMatch(admin -> admin.getUuid().equals(authorId));
 
                 if(!isOwnerOrAdmin) {
                     log.warn("Create post warn: client is not community owner or admin, client UUID={}", authorId);
                     throw new ForbiddenException("You cannot create a post as this community");
                 }
-
-                post.setAuthorCommunity(community);
-                post.setAuthorUser(null);
             }
+
+            post.setAuthorUser(user.orElse(null));
+            post.setAuthorCommunity(community.orElse(null));
 
             String imageUrl = imageUploaderService.uploadImage(file);
             post.setImageUrl(imageUrl);
@@ -379,7 +458,7 @@ public class PostServiceImpl implements PostService {
                             null);
             response.setTags(post.getTags().stream().map(Tag::getTitle).toList());
             return response;
-        } catch (ResourceNotFoundException | ForbiddenException ex) {
+        } catch (ResourceNotFoundException | ForbiddenException | ServiceException ex) {
             throw ex;
         } catch (IOException ex) {
             log.error("Image load error during creating post, user UUID={}", authorId, ex);

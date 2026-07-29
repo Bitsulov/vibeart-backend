@@ -7,8 +7,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import ru.vibeart.api.models.entities.Post;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -82,6 +84,14 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     Optional<Post> findByUuid(UUID uuid);
 
     /**
+     * Ищет публикации по списку UUID.
+     *
+     * @param uuids список UUID публикаций
+     * @return список найденных публикаций
+     */
+    List<Post> findAllByUuidIn(List<UUID> uuids);
+
+    /**
      * Ищет публикацию по UUID и блокирует найденную строку до конца транзакции,
      * чтобы конкурентные запросы к одному и тому же посту выполнялись по очереди.
      *
@@ -120,4 +130,36 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     // UPDATE posts SET reports_count = reports_count + 1 WHERE id =
     @Query("UPDATE Post p SET p.reportsCount = p.reportsCount + 1 WHERE p.id = :id")
     void incrementReportsCount(Long id);
+
+    /**
+     * Ищет публикации полнотекстовым поиском PostgreSQL по заголовку и описанию,
+     * результаты сортируются по релевантности ({@code ts_rank}).
+     * <p>
+     * Использует функциональный GIN-индекс {@code posts_search_idx} (см. {@code schema.sql}).
+     * Сортировка, переданная в {@code pageable}, игнорируется — порядок всегда определяется
+     * релевантностью запросу.
+     * </p>
+     *
+     * @param query поисковый запрос пользователя
+     * @param pageable параметры пагинации (сортировка игнорируется)
+     * @return страница с найденными публикациями, отсортированными по релевантности
+     */
+    @Query(
+            value = """
+                SELECT * FROM posts p
+                WHERE to_tsvector('russian', p.title || ' ' || coalesce(p.description, ''))
+                      @@ plainto_tsquery('russian', :query)
+                ORDER BY ts_rank(
+                    to_tsvector('russian', p.title || ' ' || coalesce(p.description, '')),
+                    plainto_tsquery('russian', :query)
+                ) DESC
+                """,
+            countQuery = """
+                SELECT count(*) FROM posts p
+                WHERE to_tsvector('russian', p.title || ' ' || coalesce(p.description, ''))
+                      @@ plainto_tsquery('russian', :query)
+                """,
+            nativeQuery = true
+    )
+    Page<Post> searchFullText(@Param("query") String query, Pageable pageable);
 }
