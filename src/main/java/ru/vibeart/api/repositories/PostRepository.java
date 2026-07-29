@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import ru.vibeart.api.models.entities.Post;
 
 import java.util.Optional;
@@ -120,4 +121,36 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     // UPDATE posts SET reports_count = reports_count + 1 WHERE id =
     @Query("UPDATE Post p SET p.reportsCount = p.reportsCount + 1 WHERE p.id = :id")
     void incrementReportsCount(Long id);
+
+    /**
+     * Ищет публикации полнотекстовым поиском PostgreSQL по заголовку и описанию,
+     * результаты сортируются по релевантности ({@code ts_rank}).
+     * <p>
+     * Использует функциональный GIN-индекс {@code posts_search_idx} (см. {@code schema.sql}).
+     * Сортировка, переданная в {@code pageable}, игнорируется — порядок всегда определяется
+     * релевантностью запросу.
+     * </p>
+     *
+     * @param query поисковый запрос пользователя
+     * @param pageable параметры пагинации (сортировка игнорируется)
+     * @return страница с найденными публикациями, отсортированными по релевантности
+     */
+    @Query(
+            value = """
+                SELECT * FROM posts p
+                WHERE to_tsvector('russian', p.title || ' ' || coalesce(p.description, ''))
+                      @@ plainto_tsquery('russian', :query)
+                ORDER BY ts_rank(
+                    to_tsvector('russian', p.title || ' ' || coalesce(p.description, '')),
+                    plainto_tsquery('russian', :query)
+                ) DESC
+                """,
+            countQuery = """
+                SELECT count(*) FROM posts p
+                WHERE to_tsvector('russian', p.title || ' ' || coalesce(p.description, ''))
+                      @@ plainto_tsquery('russian', :query)
+                """,
+            nativeQuery = true
+    )
+    Page<Post> searchFullText(@Param("query") String query, Pageable pageable);
 }

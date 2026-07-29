@@ -60,6 +60,25 @@ public class PostController {
     }
 
     @Operation(
+            summary = "Полнотекстовый поиск публикаций",
+            description = "Ищет публикации по заголовку и описанию, результаты отсортированы по релевантности запросу.",
+            responses = {
+                    @ApiResponse(responseCode = "200", description = "Список найденных публикаций успешно получен"),
+                    @ApiResponse(responseCode = "404", description = "Пользователь не найден"),
+                    @ApiResponse(responseCode = "500", description = "Ошибка базы данных или сервера")
+            }
+    )
+    @GetMapping("/search")
+    public ResponseEntity<Page<PostResponse>> getPostsBySearch(
+            @Parameter(description = "Поисковый запрос", required = true)
+            @RequestParam String query,
+            Pageable pageable
+    ) {
+        Page<PostResponse> response = postService.getPostsBySearch(query, pageable);
+        return new ResponseEntity<>(response, HttpStatus.OK);
+    }
+
+    @Operation(
             summary = "Получение публикации по UUID",
             description = "Находит публикацию по переданному UUID и возвращает.",
             responses = {

@@ -7,6 +7,7 @@ import ru.vibeart.api.dtos.post.PostCreateDetails;
 import ru.vibeart.api.dtos.post.PostResponse;
 import ru.vibeart.api.dtos.post.PostUpdateDetails;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -21,6 +22,17 @@ public interface PostService {
      * @return список объектов с данными публикаций
      */
     Page<PostResponse> getPosts(UUID albumId, Pageable pageable);
+
+    /**
+     * Ищет публикации полнотекстовым поиском по заголовку и описанию, результаты
+     * отсортированы по релевантности запросу. Сортировка, переданная в {@code pageable},
+     * не применяется — используются только номер страницы и размер.
+     *
+     * @param query поисковый запрос
+     * @param pageable параметры пагинации (номер страницы и размер; сортировка не используется)
+     * @return страница с найденными публикациями, отсортированными по релевантности
+     */
+    Page<PostResponse> getPostsBySearch(String query, Pageable pageable);
 
     /**
      * Возвращает публикацию по её UUID.

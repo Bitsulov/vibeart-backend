@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -199,6 +200,82 @@ public class PostServiceImpl implements PostService {
         } catch (Exception ex) {
             log.error("Unexpected error during getting posts", ex);
             throw new ServiceException("Unexpected error getting posts", ex);
+        }
+    }
+
+    /**
+     * <h1>Полнотекстовый поиск публикаций</h1>
+     *
+     * <h2>Назначение</h2>
+     * <p>
+     *     Ищет публикации по заголовку и описанию через полнотекстовый поиск PostgreSQL
+     *     ({@link PostRepository#searchFullText(String, Pageable)}), результаты отсортированы
+     *     по релевантности запросу. Сортировка, переданная в {@code pageable}, не используется —
+     *     из него берутся только номер страницы и размер.
+     * </p>
+     *
+     * <h3>Исключения:</h3>
+     * <ul>
+     *     <li>
+     *         Если аутентифицированный пользователь не найден, выбрасывается
+     *         {@link ResourceNotFoundException} с кодом ответа <b>404</b>
+     *     </li>
+     *     <li>
+     *         При ошибке базы данных или любой другой ошибке, выбрасывается {@link ServiceException}
+     *         с кодом ответа <b>500</b>
+     *     </li>
+     * </ul>
+     *
+     * @param query поисковый запрос
+     * @param pageable параметры пагинации (номер страницы и размер; сортировка не используется)
+     * @return страница с найденными публикациями, отсортированными по релевантности
+     * @throws ResourceNotFoundException если аутентифицированный пользователь не найден
+     * @throws ServiceException если произошла ошибка базы данных или сервера
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PostResponse> getPostsBySearch(String query, Pageable pageable) {
+        boolean isAuthenticated = authUtil.getIsAuthenticated();
+
+        try {
+            User currentUser = null;
+            if(isAuthenticated) {
+                UUID userId = authUtil.getPrincipalUuid();
+                currentUser = userRepository.findByUuid(userId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Principal user not found"));
+            }
+
+            Pageable unsortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
+            Page<Post> posts = postRepository.searchFullText(query, unsortedPageable);
+
+            Set<Long> likedPostIds = isAuthenticated ?
+                    new HashSet<>(likeRepository.findActiveLikedPostIds(currentUser, posts.getContent())) :
+                    Set.of();
+            Set<Long> reportedPostIds = isAuthenticated ?
+                    new HashSet<>(reportRepository.findReportedPostIds(currentUser, posts.getContent())) :
+                    Set.of();
+
+            return posts.map(post -> {
+                PostResponse response = modelMapper.map(post, PostResponse.class);
+                response.setAuthor(
+                        post.getAuthorUser() != null ? modelMapper.map(post.getAuthorUser(), UserResponse.class) : null
+                );
+                response.setCommunity(
+                        post.getAuthorCommunity() != null ? modelMapper.map(post.getAuthorCommunity(), CommunityResponse.class) : null
+                );
+                response.setTags(post.getTags().stream().map(Tag::getTitle).toList());
+                response.setLiked(likedPostIds.contains(post.getId()));
+                response.setReported(reportedPostIds.contains(post.getId()));
+                return response;
+            });
+        } catch (ResourceNotFoundException ex) {
+            throw ex;
+        } catch (DataAccessException ex) {
+            log.error("Database error during searching posts, query={}", query, ex);
+            throw new ServiceException("Database error searching posts", ex);
+        } catch (Exception ex) {
+            log.error("Unexpected error during searching posts, query={}", query, ex);
+            throw new ServiceException("Unexpected error searching posts", ex);
         }
     }
 
