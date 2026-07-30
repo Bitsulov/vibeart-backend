@@ -3,6 +3,7 @@ package ru.vibeart.api.services;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.web.multipart.MultipartFile;
+import ru.vibeart.api.dtos.album.AlbumAddPostsRequest;
 import ru.vibeart.api.dtos.album.AlbumCreateDetails;
 import ru.vibeart.api.dtos.album.AlbumResponse;
 import ru.vibeart.api.dtos.album.AlbumUpdateDetails;
@@ -54,9 +55,9 @@ public interface AlbumService {
      * Добавляет публикации в альбом.
      *
      * @param albumUuid UUID альбома
-     * @param postUuids список UUID публикаций для добавления
+     * @param albumAddPostsRequest список UUID публикаций для добавления
      */
-    void addPostsToAlbum(UUID albumUuid, List<UUID> postUuids);
+    void addPostsToAlbum(UUID albumUuid, AlbumAddPostsRequest albumAddPostsRequest);
 
     /**
      * Удаляет альбом по UUID.

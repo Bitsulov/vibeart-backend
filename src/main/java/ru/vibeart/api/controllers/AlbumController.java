@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import ru.vibeart.api.dtos.album.AlbumAddPostsRequest;
 import ru.vibeart.api.dtos.album.AlbumCreateDetails;
 import ru.vibeart.api.dtos.album.AlbumResponse;
 import ru.vibeart.api.dtos.album.AlbumUpdateDetails;
@@ -145,14 +146,14 @@ public class AlbumController {
             }
     )
     @PostMapping("/{id}/posts")
-    public ResponseEntity<Void> addPostsToAlbum(
+    public ResponseEntity<String> addPostsToAlbum(
             @Parameter(description = "UUID альбома", required = true)
             @PathVariable UUID id,
             @Parameter(description = "Список UUID публикаций для добавления", required = true)
-            @RequestBody List<UUID> postUuids
+            @RequestBody AlbumAddPostsRequest albumAddPostsRequest
     ) {
-        albumService.addPostsToAlbum(id, postUuids);
-        return new ResponseEntity<>(HttpStatus.OK);
+        albumService.addPostsToAlbum(id, albumAddPostsRequest);
+        return new ResponseEntity<>("Album was updated successfully", HttpStatus.OK);
     }
 
     @Operation(
