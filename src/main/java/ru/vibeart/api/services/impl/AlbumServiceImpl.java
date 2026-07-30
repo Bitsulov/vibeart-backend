@@ -10,6 +10,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import ru.vibeart.api.dtos.album.AlbumAddPostsRequest;
 import ru.vibeart.api.dtos.album.AlbumCreateDetails;
 import ru.vibeart.api.dtos.album.AlbumResponse;
 import ru.vibeart.api.dtos.album.AlbumUpdateDetails;
@@ -451,7 +452,7 @@ public class AlbumServiceImpl implements AlbumService {
      * </ul>
      *
      * @param albumUuid UUID альбома
-     * @param postUuids список UUID публикаций для добавления
+     * @param albumAddPostsRequest список UUID публикаций для добавления
      * @throws UnauthorizedException если пользователь не авторизован
      * @throws ResourceNotFoundException если текущий пользователь, альбом или одна из публикаций не найдены
      * @throws ForbiddenException если запрос отправлен не автором альбома, либо публикация принадлежит другому автору
@@ -459,7 +460,7 @@ public class AlbumServiceImpl implements AlbumService {
      */
     @Override
     @Transactional
-    public void addPostsToAlbum(UUID albumUuid, List<UUID> postUuids) {
+    public void addPostsToAlbum(UUID albumUuid, AlbumAddPostsRequest albumAddPostsRequest) {
         UUID clientUuid = authUtil.getPrincipalUuid();
 
         try {
@@ -489,10 +490,11 @@ public class AlbumServiceImpl implements AlbumService {
                 }
             }
 
-            List<Post> foundPosts = postRepository.findAllByUuidIn(postUuids);
-            if(foundPosts.size() != postUuids.size()) {
+            List<UUID> list = albumAddPostsRequest.getPostsUUIDs();
+            List<Post> foundPosts = postRepository.findAllByUuidIn(list);
+            if(foundPosts.size() != list.size()) {
                 Set<UUID> foundUuids = foundPosts.stream().map(Post::getUuid).collect(Collectors.toSet());
-                List<UUID> missing = postUuids.stream().filter(postUuid -> !foundUuids.contains(postUuid)).toList();
+                List<UUID> missing = list.stream().filter(postUuid -> !foundUuids.contains(postUuid)).toList();
                 log.warn("Adding posts to album warn: posts not found, album UUID={}, missing={}", albumUuid, missing);
                 throw new ResourceNotFoundException("Posts not found: " + missing);
             }
