@@ -60,6 +60,27 @@ public class PostController {
     }
 
     @Operation(
+            summary = "Получение списка постов автора с пагинацией",
+            description = "Возвращает постраничный список публикаций автора. Если передан albumUuid, посты, принадлежащие альбому, исключаются.",
+            responses = {
+                    @ApiResponse(responseCode = "200", description = "Список публикаций автора успешно получен"),
+                    @ApiResponse(responseCode = "404", description = "Автор публикаций или альбом с указанным UUID не найден"),
+                    @ApiResponse(responseCode = "500", description = "Ошибка базы данных или сервера")
+            }
+    )
+    @GetMapping("/author")
+    public ResponseEntity<Page<PostResponse>> getPostsByAuthor(
+            @Parameter(description = "UUID автора публикаций", required = true)
+            @RequestParam(required = true) UUID authorUuid,
+            @Parameter(description = "UUID альбома, публикации которого нужно исключить из результата")
+            @RequestParam(required = false) UUID albumUuid,
+            Pageable pageable
+    ) {
+        Page<PostResponse> response = postService.getPostsByAuthor(authorUuid, albumUuid, pageable);
+        return new ResponseEntity<>(response, HttpStatus.OK);
+    }
+
+    @Operation(
             summary = "Полнотекстовый поиск публикаций",
             description = "Ищет публикации по заголовку и описанию, результаты отсортированы по релевантности запросу.",
             responses = {
