@@ -33,6 +33,10 @@ import java.util.UUID;
  *   <li>{@link #findAllByAlbumsUuid(UUID, Pageable)} — поиск публикаций по альбому;</li>
  *   <li>{@link #findAllByAuthorUserUuid(UUID, Pageable)} — поиск публикаций по автору-пользователю;</li>
  *   <li>{@link #findAllByAuthorCommunityUuid(UUID, Pageable)} — поиск публикаций по автору-сообществу;</li>
+ *   <li>{@link #findAllByAuthorUserUuidExcludingAlbum(UUID, UUID, Pageable)} — поиск публикаций по автору-пользователю
+ *   с исключением публикаций из указанного альбома;</li>
+ *   <li>{@link #findAllByAuthorCommunityUuidExcludingAlbum(UUID, UUID, Pageable)} — поиск публикаций по автору-сообществу
+ *   с исключением публикаций из указанного альбома;</li>
  *   <li>{@link #findByUuid(UUID)} — поиск публикации по UUID;</li>
  *   <li>{@link #incrementLikesCount(Long)} — увеличение счётчика лайков публикации;</li>
  *   <li>{@link #decrementLikesCount(Long)} — уменьшение счётчика лайков публикации.</li>
@@ -74,6 +78,50 @@ public interface PostRepository extends JpaRepository<Post, Long> {
      * @return страница с найденными публикациями
      */
     Page<Post> findAllByAuthorCommunityUuid(UUID uuid, Pageable pageable);
+
+    /**
+     * Ищет публикации по автору-пользователю, исключая публикации, входящие в указанный альбом.
+     * <p>
+     * Используется отдельный запрос (а не производный метод с {@code AlbumsUuidNot}), поскольку
+     * для ManyToMany-связи производное имя транслируется в join-условие и даёт неверный результат:
+     * пост с несколькими альбомами не будет исключён, если хотя бы один из его альбомов
+     * отличается от переданного UUID.
+     * </p>
+     *
+     * @param authorUuid UUID пользователя-автора
+     * @param albumUuid UUID альбома, публикации которого нужно исключить
+     * @param pageable параметры пагинации
+     * @return страница с найденными публикациями
+     */
+    @Query("""
+            SELECT p FROM Post p
+            WHERE p.authorUser.uuid = :authorUuid
+              AND NOT EXISTS (SELECT 1 FROM p.albums a WHERE a.uuid = :albumUuid)
+            """)
+    Page<Post> findAllByAuthorUserUuidExcludingAlbum(
+            @Param("authorUuid") UUID authorUuid,
+            @Param("albumUuid") UUID albumUuid,
+            Pageable pageable
+    );
+
+    /**
+     * Ищет публикации по автору-сообществу, исключая публикации, входящие в указанный альбом.
+     *
+     * @param authorUuid UUID сообщества-автора
+     * @param albumUuid UUID альбома, публикации которого нужно исключить
+     * @param pageable параметры пагинации
+     * @return страница с найденными публикациями
+     */
+    @Query("""
+            SELECT p FROM Post p
+            WHERE p.authorCommunity.uuid = :authorUuid
+              AND NOT EXISTS (SELECT 1 FROM p.albums a WHERE a.uuid = :albumUuid)
+            """)
+    Page<Post> findAllByAuthorCommunityUuidExcludingAlbum(
+            @Param("authorUuid") UUID authorUuid,
+            @Param("albumUuid") UUID albumUuid,
+            Pageable pageable
+    );
 
     /**
      * Ищет публикацию по уникальному идентификатору (UUID).

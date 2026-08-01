@@ -204,6 +204,108 @@ public class PostServiceImpl implements PostService {
     }
 
     /**
+     * <h1>Получение списка публикаций автора</h1>
+     *
+     * <h2>Назначение</h2>
+     * <p>
+     *     Возвращает постраничный список публикаций пользователя или сообщества по UUID автора.
+     *     Если передан {@code albumId}, из результата исключаются публикации, входящие в этот альбом.
+     * </p>
+     *
+     * <h3>Исключения:</h3>
+     * <ul>
+     *     <li>
+     *         Если автор с переданным UUID не найден, выбрасывается {@link ResourceNotFoundException}
+     *         с кодом ответа <b>404</b>
+     *     </li>
+     *     <li>
+     *         Если альбом с переданным {@code albumId} не найден, выбрасывается {@link ResourceNotFoundException}
+     *         с кодом ответа <b>404</b>
+     *     </li>
+     *     <li>
+     *         При ошибке базы данных или любой другой ошибке, выбрасывается {@link ServiceException}
+     *         с кодом ответа <b>500</b>
+     *     </li>
+     * </ul>
+     *
+     * @param authorUuid UUID автора публикаций (пользователя или сообщества)
+     * @param albumId UUID альбома, публикации которого нужно исключить из результата, или {@code null}
+     * @param pageable параметры пагинации
+     * @return страница с данными публикаций автора
+     * @throws ResourceNotFoundException если автор или альбом не найдены
+     * @throws ServiceException если произошла ошибка базы данных или сервера
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PostResponse> getPostsByAuthor(UUID authorUuid, UUID albumId, Pageable pageable) {
+        boolean isAuthenticated = authUtil.getIsAuthenticated();
+
+        try {
+            User currentUser = null;
+            if(isAuthenticated) {
+                UUID userId = authUtil.getPrincipalUuid();
+                currentUser = userRepository.findByUuid(userId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Principal user not found"));
+            }
+
+            Optional<User> author = userRepository.findByUuid(authorUuid);
+            Optional<Community> community = communityRepository.findByUuid(authorUuid);
+            boolean isUser = author.isPresent();
+            boolean isCommunity = community.isPresent();
+
+            if(isUser && isCommunity) {
+                log.error("Getting posts by author error: author UUID belongs to user and community, UUID={}", authorUuid);
+                throw new ServiceException("Author of posts not found");
+            } else if(!isUser && !isCommunity) {
+                log.warn("Getting posts by author warn: author not found, UUID={}", authorUuid);
+                throw new ResourceNotFoundException("Author of posts not found with UUID: " + authorUuid);
+            }
+
+            if(albumId != null) {
+                albumRepository.findByUuid(albumId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Album not found with UUID: " + albumId));
+            }
+
+            Page<Post> posts = isUser ?
+                    (albumId != null ?
+                            postRepository.findAllByAuthorUserUuidExcludingAlbum(authorUuid, albumId, pageable) :
+                            postRepository.findAllByAuthorUserUuid(authorUuid, pageable)) :
+                    (albumId != null ?
+                            postRepository.findAllByAuthorCommunityUuidExcludingAlbum(authorUuid, albumId, pageable) :
+                            postRepository.findAllByAuthorCommunityUuid(authorUuid, pageable));
+
+            Set<Long> likedPostIds = isAuthenticated ?
+                    new HashSet<>(likeRepository.findActiveLikedPostIds(currentUser, posts.getContent())) :
+                    Set.of();
+            Set<Long> reportedPostIds = isAuthenticated ?
+                    new HashSet<>(reportRepository.findReportedPostIds(currentUser, posts.getContent())) :
+                    Set.of();
+
+            return posts.map(post -> {
+                PostResponse response = modelMapper.map(post, PostResponse.class);
+                response.setAuthor(
+                        post.getAuthorUser() != null ? modelMapper.map(post.getAuthorUser(), UserResponse.class) : null
+                );
+                response.setCommunity(
+                        post.getAuthorCommunity() != null ? modelMapper.map(post.getAuthorCommunity(), CommunityResponse.class) : null
+                );
+                response.setTags(post.getTags().stream().map(Tag::getTitle).toList());
+                response.setLiked(likedPostIds.contains(post.getId()));
+                response.setReported(reportedPostIds.contains(post.getId()));
+                return response;
+            });
+        } catch (ResourceNotFoundException | ServiceException ex) {
+            throw ex;
+        } catch (DataAccessException ex) {
+            log.error("Database error during getting posts by author, author UUID={}", authorUuid, ex);
+            throw new ServiceException("Database error getting posts by author", ex);
+        } catch (Exception ex) {
+            log.error("Unexpected error during getting posts by author, author UUID={}", authorUuid, ex);
+            throw new ServiceException("Unexpected error getting posts by author", ex);
+        }
+    }
+
+    /**
      * <h1>Полнотекстовый поиск публикаций</h1>
      *
      * <h2>Назначение</h2>
