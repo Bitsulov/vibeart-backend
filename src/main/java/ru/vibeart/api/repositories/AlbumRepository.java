@@ -24,7 +24,9 @@ import java.util.UUID;
  * <h2>Основные возможности</h2>
  * <ul>
  *   <li>{@link #findAllByPostsUuid(UUID)} — поиск альбомов, содержащих пост;</li>
- *   <li>{@link #findByUuid(UUID)} — поиск альбома по UUID.</li>
+ *   <li>{@link #findByUuid(UUID)} — поиск альбома по UUID;</li>
+ *   <li>{@link #findAllByAuthorUserUuid(UUID, Pageable)} — поиск альбомов по автору-пользователю;</li>
+ *   <li>{@link #findAllByAuthorCommunityUuid(UUID, Pageable)} — поиск альбомов по автору-сообществу.</li>
  * </ul>
  *
  */
