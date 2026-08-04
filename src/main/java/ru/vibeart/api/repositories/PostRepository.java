@@ -38,8 +38,16 @@ import java.util.UUID;
  *   <li>{@link #findAllByAuthorCommunityUuidExcludingAlbum(UUID, UUID, Pageable)} — поиск публикаций по автору-сообществу
  *   с исключением публикаций из указанного альбома;</li>
  *   <li>{@link #findByUuid(UUID)} — поиск публикации по UUID;</li>
+ *   <li>{@link #findAllByUuidIn(List)} — поиск публикаций по списку UUID;</li>
+ *   <li>{@link #findWithLockByUuid(UUID)} — поиск публикации по UUID с пессимистической блокировкой строки;</li>
  *   <li>{@link #incrementLikesCount(Long)} — увеличение счётчика лайков публикации;</li>
- *   <li>{@link #decrementLikesCount(Long)} — уменьшение счётчика лайков публикации.</li>
+ *   <li>{@link #decrementLikesCount(Long)} — уменьшение счётчика лайков публикации;</li>
+ *   <li>{@link #incrementReportsCount(Long)} — увеличение счётчика жалоб публикации;</li>
+ *   <li>{@link #searchFullText(String, Pageable)} — полнотекстовый поиск публикаций по заголовку и описанию;</li>
+ *   <li>{@link #searchFullTextByAuthorUserUuid(String, UUID, UUID, Pageable)} — полнотекстовый поиск публикаций
+ *   автора-пользователя с исключением публикаций из указанного альбома;</li>
+ *   <li>{@link #searchFullTextByAuthorCommunityUuid(String, UUID, UUID, Pageable)} — полнотекстовый поиск публикаций
+ *   автора-сообщества с исключением публикаций из указанного альбома.</li>
  * </ul>
  *
  */
@@ -210,4 +218,110 @@ public interface PostRepository extends JpaRepository<Post, Long> {
             nativeQuery = true
     )
     Page<Post> searchFullText(@Param("query") String query, Pageable pageable);
+
+    /**
+     * Ищет полнотекстовым поиском публикации автора-пользователя, опционально исключая
+     * публикации, входящие в указанный альбом.
+     * <p>
+     * Использует функциональный GIN-индекс {@code posts_search_idx} (см. {@code schema.sql}).
+     * Сортировка, переданная в {@code pageable}, игнорируется — порядок всегда определяется
+     * релевантностью запросу.
+     * </p>
+     *
+     * @param query поисковый запрос пользователя
+     * @param authorUuid UUID пользователя-автора
+     * @param albumUuid UUID альбома, публикации которого нужно исключить, или {@code null}, чтобы не исключать
+     * @param pageable параметры пагинации (сортировка игнорируется)
+     * @return страница с найденными публикациями, отсортированными по релевантности
+     */
+    @Query(
+            value = """
+                SELECT p.* FROM posts p
+                JOIN users u ON u.id = p.author_user_id
+                WHERE u.uuid = :authorUuid
+                  AND to_tsvector('russian', p.title || ' ' || coalesce(p.description, ''))
+                      @@ plainto_tsquery('russian', :query)
+                  AND (:albumUuid IS NULL OR NOT EXISTS (
+                      SELECT 1 FROM album_posts ap
+                      JOIN albums a ON a.id = ap.album_id
+                      WHERE ap.post_id = p.id AND a.uuid = :albumUuid
+                  ))
+                ORDER BY ts_rank(
+                    to_tsvector('russian', p.title || ' ' || coalesce(p.description, '')),
+                    plainto_tsquery('russian', :query)
+                ) DESC
+                """,
+            countQuery = """
+                SELECT count(*) FROM posts p
+                JOIN users u ON u.id = p.author_user_id
+                WHERE u.uuid = :authorUuid
+                  AND to_tsvector('russian', p.title || ' ' || coalesce(p.description, ''))
+                      @@ plainto_tsquery('russian', :query)
+                  AND (:albumUuid IS NULL OR NOT EXISTS (
+                      SELECT 1 FROM album_posts ap
+                      JOIN albums a ON a.id = ap.album_id
+                      WHERE ap.post_id = p.id AND a.uuid = :albumUuid
+                  ))
+                """,
+            nativeQuery = true
+    )
+    Page<Post> searchFullTextByAuthorUserUuid(
+            @Param("query") String query,
+            @Param("authorUuid") UUID authorUuid,
+            @Param("albumUuid") UUID albumUuid,
+            Pageable pageable
+    );
+
+    /**
+     * Ищет полнотекстовым поиском публикации автора-сообщества, опционально исключая
+     * публикации, входящие в указанный альбом.
+     * <p>
+     * Использует функциональный GIN-индекс {@code posts_search_idx} (см. {@code schema.sql}).
+     * Сортировка, переданная в {@code pageable}, игнорируется — порядок всегда определяется
+     * релевантностью запросу.
+     * </p>
+     *
+     * @param query поисковый запрос пользователя
+     * @param authorUuid UUID сообщества-автора
+     * @param albumUuid UUID альбома, публикации которого нужно исключить, или {@code null}, чтобы не исключать
+     * @param pageable параметры пагинации (сортировка игнорируется)
+     * @return страница с найденными публикациями, отсортированными по релевантности
+     */
+    @Query(
+            value = """
+                SELECT p.* FROM posts p
+                JOIN communities c ON c.id = p.author_community_id
+                WHERE c.uuid = :authorUuid
+                  AND to_tsvector('russian', p.title || ' ' || coalesce(p.description, ''))
+                      @@ plainto_tsquery('russian', :query)
+                  AND (:albumUuid IS NULL OR NOT EXISTS (
+                      SELECT 1 FROM album_posts ap
+                      JOIN albums a ON a.id = ap.album_id
+                      WHERE ap.post_id = p.id AND a.uuid = :albumUuid
+                  ))
+                ORDER BY ts_rank(
+                    to_tsvector('russian', p.title || ' ' || coalesce(p.description, '')),
+                    plainto_tsquery('russian', :query)
+                ) DESC
+                """,
+            countQuery = """
+                SELECT count(*) FROM posts p
+                JOIN communities c ON c.id = p.author_community_id
+                WHERE c.uuid = :authorUuid
+                  AND to_tsvector('russian', p.title || ' ' || coalesce(p.description, ''))
+                      @@ plainto_tsquery('russian', :query)
+                  AND (:albumUuid IS NULL OR NOT EXISTS (
+                      SELECT 1 FROM album_posts ap
+                      JOIN albums a ON a.id = ap.album_id
+                      WHERE ap.post_id = p.id AND a.uuid = :albumUuid
+                  ))
+                """,
+            nativeQuery = true
+    )
+    Page<Post> searchFullTextByAuthorCommunityUuid(
+            @Param("query") String query,
+            @Param("authorUuid") UUID authorUuid,
+            @Param("albumUuid") UUID albumUuid,
+            Pageable pageable
+    );
 }
