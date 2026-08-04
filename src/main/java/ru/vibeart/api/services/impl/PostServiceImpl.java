@@ -310,10 +310,17 @@ public class PostServiceImpl implements PostService {
      *
      * <h2>Назначение</h2>
      * <p>
-     *     Ищет публикации по заголовку и описанию через полнотекстовый поиск PostgreSQL
-     *     ({@link PostRepository#searchFullText(String, Pageable)}), результаты отсортированы
-     *     по релевантности запросу. Сортировка, переданная в {@code pageable}, не используется —
-     *     из него берутся только номер страницы и размер.
+     *     Ищет публикации по заголовку и описанию через полнотекстовый поиск PostgreSQL,
+     *     результаты отсортированы по релевантности запросу. Сортировка, переданная в {@code pageable},
+     *     не используется - из него берутся только номер страницы и размер.
+     * </p>
+     * <p>
+     *     Если передан {@code authorUuid}, поиск ограничивается публикациями указанного автора
+     *     ({@link PostRepository#searchFullTextByAuthorUserUuid(String, UUID, UUID, Pageable)} или
+     *     {@link PostRepository#searchFullTextByAuthorCommunityUuid(String, UUID, UUID, Pageable)});
+     *     если дополнительно передан {@code albumId}, публикации, входящие в этот альбом, исключаются
+     *     из результата. Без {@code authorUuid} используется
+     *     {@link PostRepository#searchFullText(String, Pageable)}.
      * </p>
      *
      * <h3>Исключения:</h3>
@@ -323,20 +330,30 @@ public class PostServiceImpl implements PostService {
      *         {@link ResourceNotFoundException} с кодом ответа <b>404</b>
      *     </li>
      *     <li>
+     *         Если автор с переданным {@code authorUuid} не найден, выбрасывается
+     *         {@link ResourceNotFoundException} с кодом ответа <b>404</b>
+     *     </li>
+     *     <li>
+     *         Если альбом с переданным {@code albumId} не найден, выбрасывается
+     *         {@link ResourceNotFoundException} с кодом ответа <b>404</b>
+     *     </li>
+     *     <li>
      *         При ошибке базы данных или любой другой ошибке, выбрасывается {@link ServiceException}
      *         с кодом ответа <b>500</b>
      *     </li>
      * </ul>
      *
      * @param query поисковый запрос
+     * @param authorUuid UUID автора публикаций, или {@code null}
+     * @param albumId UUID альбома, публикации которого нужно исключить из результата, или {@code null}
      * @param pageable параметры пагинации (номер страницы и размер; сортировка не используется)
      * @return страница с найденными публикациями, отсортированными по релевантности
-     * @throws ResourceNotFoundException если аутентифицированный пользователь не найден
+     * @throws ResourceNotFoundException если аутентифицированный пользователь, автор или альбом не найдены
      * @throws ServiceException если произошла ошибка базы данных или сервера
      */
     @Override
     @Transactional(readOnly = true)
-    public Page<PostResponse> getPostsBySearch(String query, Pageable pageable) {
+    public Page<PostResponse> getPostsBySearch(String query, UUID authorUuid, UUID albumId, Pageable pageable) {
         boolean isAuthenticated = authUtil.getIsAuthenticated();
 
         try {
@@ -348,7 +365,33 @@ public class PostServiceImpl implements PostService {
             }
 
             Pageable unsortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
-            Page<Post> posts = postRepository.searchFullText(query, unsortedPageable);
+
+            Page<Post> posts;
+            if(authorUuid != null) {
+                Optional<User> author = userRepository.findByUuid(authorUuid);
+                Optional<Community> community = communityRepository.findByUuid(authorUuid);
+                boolean isUser = author.isPresent();
+                boolean isCommunity = community.isPresent();
+
+                if(isUser && isCommunity) {
+                    log.error("Searching posts by author error: author UUID belongs to user and community, UUID={}", authorUuid);
+                    throw new ServiceException("Author of posts not found");
+                } else if(!isUser && !isCommunity) {
+                    log.warn("Searching posts by author warn: author not found, UUID={}", authorUuid);
+                    throw new ResourceNotFoundException("Author of posts not found with UUID: " + authorUuid);
+                }
+
+                if(albumId != null) {
+                    albumRepository.findByUuid(albumId)
+                            .orElseThrow(() -> new ResourceNotFoundException("Album not found with UUID: " + albumId));
+                }
+
+                posts = isUser ?
+                        postRepository.searchFullTextByAuthorUserUuid(query, authorUuid, albumId, unsortedPageable) :
+                        postRepository.searchFullTextByAuthorCommunityUuid(query, authorUuid, albumId, unsortedPageable);
+            } else {
+                posts = postRepository.searchFullText(query, unsortedPageable);
+            }
 
             Set<Long> likedPostIds = isAuthenticated ?
                     new HashSet<>(likeRepository.findActiveLikedPostIds(currentUser, posts.getContent())) :
@@ -370,7 +413,7 @@ public class PostServiceImpl implements PostService {
                 response.setReported(reportedPostIds.contains(post.getId()));
                 return response;
             });
-        } catch (ResourceNotFoundException ex) {
+        } catch (ResourceNotFoundException | ServiceException ex) {
             throw ex;
         } catch (DataAccessException ex) {
             log.error("Database error during searching posts, query={}", query, ex);
