@@ -82,10 +82,12 @@ public class PostController {
 
     @Operation(
             summary = "Полнотекстовый поиск публикаций",
-            description = "Ищет публикации по заголовку и описанию, результаты отсортированы по релевантности запросу.",
+            description = "Ищет публикации по заголовку и описанию, результаты отсортированы по релевантности запросу. " +
+                    "Если передан authorUuid, поиск ограничивается публикациями автора; если дополнительно передан " +
+                    "albumUuid, посты, принадлежащие альбому, исключаются.",
             responses = {
                     @ApiResponse(responseCode = "200", description = "Список найденных публикаций успешно получен"),
-                    @ApiResponse(responseCode = "404", description = "Пользователь не найден"),
+                    @ApiResponse(responseCode = "404", description = "Пользователь, автор публикаций или альбом с указанным UUID не найден"),
                     @ApiResponse(responseCode = "500", description = "Ошибка базы данных или сервера")
             }
     )
@@ -93,9 +95,13 @@ public class PostController {
     public ResponseEntity<Page<PostResponse>> getPostsBySearch(
             @Parameter(description = "Поисковый запрос", required = true)
             @RequestParam String query,
+            @Parameter(description = "UUID автора публикаций для ограничения поиска")
+            @RequestParam(required = false) UUID authorUuid,
+            @Parameter(description = "UUID альбома, публикации которого нужно исключить из результата")
+            @RequestParam(required = false) UUID albumUuid,
             Pageable pageable
     ) {
-        Page<PostResponse> response = postService.getPostsBySearch(query, pageable);
+        Page<PostResponse> response = postService.getPostsBySearch(query, authorUuid, albumUuid, pageable);
         return new ResponseEntity<>(response, HttpStatus.OK);
     }
 
