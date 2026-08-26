@@ -6,6 +6,8 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -243,5 +245,63 @@ public class UserController {
     ) {
         userService.deleteUserByUUID(id);
         return new ResponseEntity<>("User was deleted correctly", HttpStatus.OK);
+    }
+
+    @Operation(
+            summary = "Получение списка друзей текущего пользователя с пагинацией",
+            description = "Возвращает постраничный список друзей текущего пользователя — тех, с кем оформлена взаимная подписка.",
+            responses = {
+                    @ApiResponse(responseCode = "200", description = "Список друзей успешно получен"),
+                    @ApiResponse(responseCode = "401", description = "Пользователь не авторизован"),
+                    @ApiResponse(responseCode = "500", description = "Ошибка базы данных или сервера")
+            }
+    )
+    @GetMapping("/friends")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Page<UserResponse>> getFriends(Pageable pageable) {
+        Page<UserResponse> response = userService.getFriends(pageable);
+        return new ResponseEntity<>(response, HttpStatus.OK);
+    }
+
+    @Operation(
+            summary = "Поиск среди друзей текущего пользователя",
+            description = "Ищет среди друзей текущего пользователя по имени или имени пользователя (username). " +
+                    "Если запрос начинается с @, поиск идёт по имени пользователя.",
+            responses = {
+                    @ApiResponse(responseCode = "200", description = "Список найденных друзей успешно получен"),
+                    @ApiResponse(responseCode = "401", description = "Пользователь не авторизован"),
+                    @ApiResponse(responseCode = "500", description = "Ошибка базы данных или сервера")
+            }
+    )
+    @GetMapping("/friends/search")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Page<UserResponse>> getFriendsBySearch(
+            @Parameter(description = "Поисковый запрос", required = true)
+            @RequestParam String query,
+            Pageable pageable
+    ) {
+        Page<UserResponse> response = userService.getFriendsBySearch(query, pageable);
+        return new ResponseEntity<>(response, HttpStatus.OK);
+    }
+
+    @Operation(
+            summary = "Переключение подписки на пользователя",
+            description = "Оформляет или отменяет подписку текущего пользователя на другого пользователя.",
+            responses = {
+                    @ApiResponse(responseCode = "200", description = "Подписка успешно переключена"),
+                    @ApiResponse(responseCode = "400", description = "Пользователь пытается подписаться на самого себя"),
+                    @ApiResponse(responseCode = "401", description = "Пользователь не авторизован"),
+                    @ApiResponse(responseCode = "404", description = "Пользователь не найден"),
+                    @ApiResponse(responseCode = "500", description = "Ошибка базы данных или сервера")
+            }
+    )
+    @PostMapping("/{id}/subscribe")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<String> subscribe(
+            @Parameter(description = "UUID пользователя", required = true)
+            @PathVariable UUID id
+    ) {
+        userService.toggleSubscription(id);
+        return new ResponseEntity<>("Subscription toggled successfully", HttpStatus.OK);
     }
 }
