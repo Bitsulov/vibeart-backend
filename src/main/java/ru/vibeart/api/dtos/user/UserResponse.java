@@ -21,6 +21,7 @@ public class UserResponse {
     private TrustStatus trustStatus;
     private OnlineStatus onlineStatus;
     private boolean enabled;
+    private Boolean subscribed;
 
     @Schema(description = "UUID пользователя", example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
     public UUID getUuid() {
@@ -116,5 +117,13 @@ public class UserResponse {
     }
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    @Schema(description = "Подписан ли текущий пользователь на этого пользователя.")
+    public Boolean getSubscribed() {
+        return subscribed;
+    }
+    public void setSubscribed(Boolean subscribed) {
+        this.subscribed = subscribed;
     }
 }
