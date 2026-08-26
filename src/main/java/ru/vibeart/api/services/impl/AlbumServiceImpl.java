@@ -21,11 +21,16 @@ import ru.vibeart.api.exceptions.ResourceNotFoundException;
 import ru.vibeart.api.exceptions.UnauthorizedException;
 import ru.vibeart.api.models.entities.Album;
 import ru.vibeart.api.models.entities.Community;
+import ru.vibeart.api.models.entities.CommunitySubscription;
 import ru.vibeart.api.models.entities.Post;
+import ru.vibeart.api.models.entities.Subscription;
+import ru.vibeart.api.models.entities.Tag;
 import ru.vibeart.api.models.entities.User;
 import ru.vibeart.api.repositories.AlbumRepository;
 import ru.vibeart.api.repositories.CommunityRepository;
+import ru.vibeart.api.repositories.CommunitySubscriptionRepository;
 import ru.vibeart.api.repositories.PostRepository;
+import ru.vibeart.api.repositories.SubscriptionRepository;
 import ru.vibeart.api.repositories.UserRepository;
 import ru.vibeart.api.services.AlbumService;
 import ru.vibeart.api.utils.AuthUtil;
@@ -56,6 +61,8 @@ public class AlbumServiceImpl implements AlbumService {
     private final ModelMapper modelMapper;
     private final AuthUtil authUtil;
     private final ImageUploaderService imageUploaderService;
+    private final SubscriptionRepository subscriptionRepository;
+    private final CommunitySubscriptionRepository communitySubscriptionRepository;
 
     private static final Logger log = LoggerFactory.getLogger(AlbumServiceImpl.class);
 
@@ -69,6 +76,8 @@ public class AlbumServiceImpl implements AlbumService {
      * @param modelMapper конвертер для преобразования DTO и сущностей
      * @param authUtil утилита для получения данных текущего аутентифицированного пользователя
      * @param imageUploaderService сервис загрузки и удаления изображений
+     * @param subscriptionRepository репозиторий подписок пользователей друг на друга
+     * @param communitySubscriptionRepository репозиторий подписок пользователей на сообщества
      */
     public AlbumServiceImpl(
             AlbumRepository albumRepository,
@@ -77,7 +86,9 @@ public class AlbumServiceImpl implements AlbumService {
             CommunityRepository communityRepository,
             ModelMapper modelMapper,
             AuthUtil authUtil,
-            ImageUploaderService imageUploaderService
+            ImageUploaderService imageUploaderService,
+            SubscriptionRepository subscriptionRepository,
+            CommunitySubscriptionRepository communitySubscriptionRepository
     ) {
         this.albumRepository = albumRepository;
         this.postRepository = postRepository;
@@ -86,6 +97,8 @@ public class AlbumServiceImpl implements AlbumService {
         this.modelMapper = modelMapper;
         this.authUtil = authUtil;
         this.imageUploaderService = imageUploaderService;
+        this.subscriptionRepository = subscriptionRepository;
+        this.communitySubscriptionRepository = communitySubscriptionRepository;
     }
 
     /**
@@ -113,6 +126,7 @@ public class AlbumServiceImpl implements AlbumService {
      * @throws ServiceException если произошла ошибка базы данных или сервера
      */
     @Override
+    @Transactional(readOnly = true)
     public Page<AlbumResponse> getAlbumsByUserOrCommunity(UUID authorUuid, Pageable pageable) {
         try {
             Optional<User> user = userRepository.findByUuid(authorUuid);
@@ -132,10 +146,31 @@ public class AlbumServiceImpl implements AlbumService {
                 albums = albumRepository.findAllByAuthorCommunityUuid(authorUuid, pageable);
             }
 
+            User currentUser = authUtil.getIsAuthenticated() ?
+                    userRepository.findByUuid(authUtil.getPrincipalUuid()).orElse(null) : null;
+
             UserResponse authorUserResponse = !isEmptyUser ?
                     modelMapper.map(user.get(), UserResponse.class) : null;
+            if(authorUserResponse != null) {
+                authorUserResponse.setSubscribed(
+                        currentUser == null || currentUser.getUuid().equals(user.get().getUuid()) ?
+                                null :
+                                subscriptionRepository.findByFollowerAndFollowing(currentUser, user.get())
+                                        .map(Subscription::isActive).orElse(false)
+                );
+            }
+
             CommunityResponse authorCommunityResponse = !isEmptyCommunity ?
                     modelMapper.map(community.get(), CommunityResponse.class) : null;
+            if(authorCommunityResponse != null) {
+                authorCommunityResponse.setTags(community.get().getTags().stream().map(Tag::getTitle).toList());
+                authorCommunityResponse.setSubscribed(
+                        currentUser == null || currentUser.getUuid().equals(community.get().getOwner().getUuid()) ?
+                                null :
+                                communitySubscriptionRepository.findByFollowerAndFollowing(currentUser, community.get())
+                                        .map(CommunitySubscription::isActive).orElse(false)
+                );
+            }
 
             return albums.map(album -> {
                 AlbumResponse response = modelMapper.map(album, AlbumResponse.class);
@@ -180,22 +215,42 @@ public class AlbumServiceImpl implements AlbumService {
      * @throws ServiceException если произошла ошибка базы данных или сервера
      */
     @Override
+    @Transactional(readOnly = true)
     public AlbumResponse getAlbumByUuid(UUID uuid) {
         try {
             Album album = albumRepository.findByUuid(uuid)
                     .orElseThrow(() -> new ResourceNotFoundException("Album not found"));
 
+            User currentUser = authUtil.getIsAuthenticated() ?
+                    userRepository.findByUuid(authUtil.getPrincipalUuid()).orElse(null) : null;
+
             AlbumResponse response = modelMapper.map(album, AlbumResponse.class);
-            response.setAuthorUser(
-                    album.getAuthorUser() != null ?
-                            modelMapper.map(album.getAuthorUser(), UserResponse.class) :
-                            null
-            );
-            response.setAuthorCommunity(
-                    album.getAuthorCommunity() != null ?
-                            modelMapper.map(album.getAuthorCommunity(), CommunityResponse.class) :
-                            null
-            );
+
+            User authorUser = album.getAuthorUser();
+            UserResponse authorUserResponse = authorUser != null ? modelMapper.map(authorUser, UserResponse.class) : null;
+            if(authorUserResponse != null) {
+                authorUserResponse.setSubscribed(
+                        currentUser == null || currentUser.getUuid().equals(authorUser.getUuid()) ?
+                                null :
+                                subscriptionRepository.findByFollowerAndFollowing(currentUser, authorUser)
+                                        .map(Subscription::isActive).orElse(false)
+                );
+            }
+            response.setAuthorUser(authorUserResponse);
+
+            Community authorCommunity = album.getAuthorCommunity();
+            CommunityResponse authorCommunityResponse = authorCommunity != null ?
+                    modelMapper.map(authorCommunity, CommunityResponse.class) : null;
+            if(authorCommunityResponse != null) {
+                authorCommunityResponse.setTags(authorCommunity.getTags().stream().map(Tag::getTitle).toList());
+                authorCommunityResponse.setSubscribed(
+                        currentUser == null || currentUser.getUuid().equals(authorCommunity.getOwner().getUuid()) ?
+                                null :
+                                communitySubscriptionRepository.findByFollowerAndFollowing(currentUser, authorCommunity)
+                                        .map(CommunitySubscription::isActive).orElse(false)
+                );
+            }
+            response.setAuthorCommunity(authorCommunityResponse);
             return response;
         } catch (ResourceNotFoundException ex) {
             throw ex;
@@ -254,7 +309,7 @@ public class AlbumServiceImpl implements AlbumService {
         UUID authorUuid = albumCreateDetails.getAuthorUuid();
 
         try {
-            userRepository.findByUuid(clientUuid)
+            User currentUser = userRepository.findByUuid(clientUuid)
                     .orElseThrow(() -> new ResourceNotFoundException("Principal user not found"));
 
             Optional<User> user = userRepository.findByUuid(authorUuid);
@@ -305,7 +360,18 @@ public class AlbumServiceImpl implements AlbumService {
 
             AlbumResponse response = modelMapper.map(album, AlbumResponse.class);
             response.setAuthorUser(isUser ? modelMapper.map(user.get(), UserResponse.class) : null);
-            response.setAuthorCommunity(isCommunity ? modelMapper.map(community.get(), CommunityResponse.class) : null);
+            CommunityResponse authorCommunityResponse = isCommunity ?
+                    modelMapper.map(community.get(), CommunityResponse.class) : null;
+            if(authorCommunityResponse != null) {
+                authorCommunityResponse.setTags(community.get().getTags().stream().map(Tag::getTitle).toList());
+                authorCommunityResponse.setSubscribed(
+                        currentUser.getUuid().equals(community.get().getOwner().getUuid()) ?
+                                null :
+                                communitySubscriptionRepository.findByFollowerAndFollowing(currentUser, community.get())
+                                        .map(CommunitySubscription::isActive).orElse(false)
+                );
+            }
+            response.setAuthorCommunity(authorCommunityResponse);
             return response;
         } catch (ServiceException | ForbiddenException | ResourceNotFoundException ex) {
             throw ex;
@@ -367,7 +433,7 @@ public class AlbumServiceImpl implements AlbumService {
         UUID clientUuid = authUtil.getPrincipalUuid();
 
         try {
-            userRepository.findByUuid(clientUuid)
+            User currentUser = userRepository.findByUuid(clientUuid)
                     .orElseThrow(() -> new ResourceNotFoundException("Principal user not found"));
 
             Album album = albumRepository.findByUuid(uuid)
@@ -406,7 +472,18 @@ public class AlbumServiceImpl implements AlbumService {
 
             AlbumResponse response = modelMapper.map(album, AlbumResponse.class);
             response.setAuthorUser(isUser ? modelMapper.map(authorUser, UserResponse.class) : null);
-            response.setAuthorCommunity(isCommunity ? modelMapper.map(authorCommunity, CommunityResponse.class) : null);
+            CommunityResponse authorCommunityResponse = isCommunity ?
+                    modelMapper.map(authorCommunity, CommunityResponse.class) : null;
+            if(authorCommunityResponse != null) {
+                authorCommunityResponse.setTags(authorCommunity.getTags().stream().map(Tag::getTitle).toList());
+                authorCommunityResponse.setSubscribed(
+                        currentUser.getUuid().equals(authorCommunity.getOwner().getUuid()) ?
+                                null :
+                                communitySubscriptionRepository.findByFollowerAndFollowing(currentUser, authorCommunity)
+                                        .map(CommunitySubscription::isActive).orElse(false)
+                );
+            }
+            response.setAuthorCommunity(authorCommunityResponse);
             return response;
         } catch (ResourceNotFoundException | ForbiddenException ex) {
             throw ex;

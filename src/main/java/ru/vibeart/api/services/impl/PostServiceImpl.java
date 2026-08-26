@@ -53,6 +53,8 @@ public class PostServiceImpl implements PostService {
     private final TagRepository tagRepository;
     private final LikeRepository likeRepository;
     private final ReportRepository reportRepository;
+    private final SubscriptionRepository subscriptionRepository;
+    private final CommunitySubscriptionRepository communitySubscriptionRepository;
     private final AuthUtil authUtil;
 
     private static final Logger log = LoggerFactory.getLogger(PostServiceImpl.class);
@@ -68,6 +70,8 @@ public class PostServiceImpl implements PostService {
      * @param imageUploaderService сервис загрузки и удаления изображений
      * @param tagRepository репозиторий тегов
      * @param likeRepository репозиторий лайков
+     * @param subscriptionRepository репозиторий подписок пользователей друг на друга
+     * @param communitySubscriptionRepository репозиторий подписок пользователей на сообщества
      * @param authUtil утилита для получения данных текущего аутентифицированного пользователя
      */
     public PostServiceImpl(
@@ -80,6 +84,8 @@ public class PostServiceImpl implements PostService {
             TagRepository tagRepository,
             LikeRepository likeRepository,
             ReportRepository reportRepository,
+            SubscriptionRepository subscriptionRepository,
+            CommunitySubscriptionRepository communitySubscriptionRepository,
             AuthUtil authUtil
     ) {
         this.postRepository = postRepository;
@@ -91,6 +97,8 @@ public class PostServiceImpl implements PostService {
         this.tagRepository = tagRepository;
         this.likeRepository = likeRepository;
         this.reportRepository = reportRepository;
+        this.subscriptionRepository = subscriptionRepository;
+        this.communitySubscriptionRepository = communitySubscriptionRepository;
         this.authUtil = authUtil;
 
         modelMapper.getConfiguration().setAmbiguityIgnored(true);
@@ -131,12 +139,10 @@ public class PostServiceImpl implements PostService {
         boolean isAuthenticated = authUtil.getIsAuthenticated();
 
         try {
-            User currentUser = null;
-            if(isAuthenticated) {
-                UUID userId = authUtil.getPrincipalUuid();
-                currentUser = userRepository.findByUuid(userId)
-                        .orElseThrow(() -> new ResourceNotFoundException("Principal user not found"));
-            }
+            User currentUser = isAuthenticated ?
+                    userRepository.findByUuid(authUtil.getPrincipalUuid())
+                            .orElseThrow(() -> new ResourceNotFoundException("Principal user not found")) :
+                    null;
 
             if(albumId != null) {
                 Album album = albumRepository.findByUuid(albumId)
@@ -153,16 +159,32 @@ public class PostServiceImpl implements PostService {
 
                 return posts.map(post -> {
                     PostResponse response = modelMapper.map(post, PostResponse.class);
-                    response.setAuthor(
-                            post.getAuthorUser() != null ?
-                                    modelMapper.map(post.getAuthorUser(), UserResponse.class) :
-                                    null
-                    );
-                    response.setCommunity(
-                            post.getAuthorCommunity() != null ?
-                                    modelMapper.map(post.getAuthorCommunity(), CommunityResponse.class) :
-                                    null
-                    );
+
+                    User authorUser = post.getAuthorUser();
+                    UserResponse authorResponse = authorUser != null ? modelMapper.map(authorUser, UserResponse.class) : null;
+                    if(authorResponse != null) {
+                        authorResponse.setSubscribed(
+                                currentUser == null || currentUser.getUuid().equals(authorUser.getUuid()) ?
+                                        null :
+                                        subscriptionRepository.findByFollowerAndFollowing(currentUser, authorUser)
+                                                .map(Subscription::isActive).orElse(false)
+                        );
+                    }
+                    response.setAuthor(authorResponse);
+
+                    Community authorCommunity = post.getAuthorCommunity();
+                    CommunityResponse communityResponse = authorCommunity != null ?
+                            modelMapper.map(authorCommunity, CommunityResponse.class) : null;
+                    if(communityResponse != null) {
+                        communityResponse.setTags(authorCommunity.getTags().stream().map(Tag::getTitle).toList());
+                        communityResponse.setSubscribed(
+                                currentUser == null || currentUser.getUuid().equals(authorCommunity.getOwner().getUuid()) ?
+                                        null :
+                                        communitySubscriptionRepository.findByFollowerAndFollowing(currentUser, authorCommunity)
+                                                .map(CommunitySubscription::isActive).orElse(false)
+                        );
+                    }
+                    response.setCommunity(communityResponse);
                     response.setTags(post.getTags().stream().map(Tag::getTitle).toList());
                     response.setLiked(likedPostIds.contains(post.getId()));
                     response.setReported(reportedPostIds.contains(post.getId()));
@@ -183,9 +205,12 @@ public class PostServiceImpl implements PostService {
                     response.setAuthor(
                             post.getAuthorUser() != null ? modelMapper.map(post.getAuthorUser(), UserResponse.class) : null
                     );
-                    response.setCommunity(
-                            post.getAuthorCommunity() != null ? modelMapper.map(post.getAuthorCommunity(), CommunityResponse.class) : null
-                    );
+                    CommunityResponse communityResponse = post.getAuthorCommunity() != null ?
+                            modelMapper.map(post.getAuthorCommunity(), CommunityResponse.class) : null;
+                    if(communityResponse != null) {
+                        communityResponse.setTags(post.getAuthorCommunity().getTags().stream().map(Tag::getTitle).toList());
+                    }
+                    response.setCommunity(communityResponse);
                     response.setTags(post.getTags().stream().map(Tag::getTitle).toList());
                     response.setLiked(likedPostIds.contains(post.getId()));
                     response.setReported(reportedPostIds.contains(post.getId()));
@@ -241,12 +266,10 @@ public class PostServiceImpl implements PostService {
         boolean isAuthenticated = authUtil.getIsAuthenticated();
 
         try {
-            User currentUser = null;
-            if(isAuthenticated) {
-                UUID userId = authUtil.getPrincipalUuid();
-                currentUser = userRepository.findByUuid(userId)
-                        .orElseThrow(() -> new ResourceNotFoundException("Principal user not found"));
-            }
+            User currentUser = isAuthenticated ?
+                    userRepository.findByUuid(authUtil.getPrincipalUuid())
+                            .orElseThrow(() -> new ResourceNotFoundException("Principal user not found")) :
+                    null;
 
             Optional<User> author = userRepository.findByUuid(authorUuid);
             Optional<Community> community = communityRepository.findByUuid(authorUuid);
@@ -283,12 +306,32 @@ public class PostServiceImpl implements PostService {
 
             return posts.map(post -> {
                 PostResponse response = modelMapper.map(post, PostResponse.class);
-                response.setAuthor(
-                        post.getAuthorUser() != null ? modelMapper.map(post.getAuthorUser(), UserResponse.class) : null
-                );
-                response.setCommunity(
-                        post.getAuthorCommunity() != null ? modelMapper.map(post.getAuthorCommunity(), CommunityResponse.class) : null
-                );
+
+                User authorUser = post.getAuthorUser();
+                UserResponse authorResponse = authorUser != null ? modelMapper.map(authorUser, UserResponse.class) : null;
+                if(authorResponse != null) {
+                    authorResponse.setSubscribed(
+                            currentUser == null || currentUser.getUuid().equals(authorUser.getUuid()) ?
+                                    null :
+                                    subscriptionRepository.findByFollowerAndFollowing(currentUser, authorUser)
+                                            .map(Subscription::isActive).orElse(false)
+                    );
+                }
+                response.setAuthor(authorResponse);
+
+                Community authorCommunity = post.getAuthorCommunity();
+                CommunityResponse communityResponse = authorCommunity != null ?
+                        modelMapper.map(authorCommunity, CommunityResponse.class) : null;
+                if(communityResponse != null) {
+                    communityResponse.setTags(authorCommunity.getTags().stream().map(Tag::getTitle).toList());
+                    communityResponse.setSubscribed(
+                            currentUser == null || currentUser.getUuid().equals(authorCommunity.getOwner().getUuid()) ?
+                                    null :
+                                    communitySubscriptionRepository.findByFollowerAndFollowing(currentUser, authorCommunity)
+                                            .map(CommunitySubscription::isActive).orElse(false)
+                    );
+                }
+                response.setCommunity(communityResponse);
                 response.setTags(post.getTags().stream().map(Tag::getTitle).toList());
                 response.setLiked(likedPostIds.contains(post.getId()));
                 response.setReported(reportedPostIds.contains(post.getId()));
@@ -357,12 +400,10 @@ public class PostServiceImpl implements PostService {
         boolean isAuthenticated = authUtil.getIsAuthenticated();
 
         try {
-            User currentUser = null;
-            if(isAuthenticated) {
-                UUID userId = authUtil.getPrincipalUuid();
-                currentUser = userRepository.findByUuid(userId)
-                        .orElseThrow(() -> new ResourceNotFoundException("Principal user not found"));
-            }
+            User currentUser = isAuthenticated ?
+                    userRepository.findByUuid(authUtil.getPrincipalUuid())
+                            .orElseThrow(() -> new ResourceNotFoundException("Principal user not found")) :
+                    null;
 
             Pageable unsortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
 
@@ -402,12 +443,32 @@ public class PostServiceImpl implements PostService {
 
             return posts.map(post -> {
                 PostResponse response = modelMapper.map(post, PostResponse.class);
-                response.setAuthor(
-                        post.getAuthorUser() != null ? modelMapper.map(post.getAuthorUser(), UserResponse.class) : null
-                );
-                response.setCommunity(
-                        post.getAuthorCommunity() != null ? modelMapper.map(post.getAuthorCommunity(), CommunityResponse.class) : null
-                );
+
+                User authorUser = post.getAuthorUser();
+                UserResponse authorResponse = authorUser != null ? modelMapper.map(authorUser, UserResponse.class) : null;
+                if(authorResponse != null) {
+                    authorResponse.setSubscribed(
+                            currentUser == null || currentUser.getUuid().equals(authorUser.getUuid()) ?
+                                    null :
+                                    subscriptionRepository.findByFollowerAndFollowing(currentUser, authorUser)
+                                            .map(Subscription::isActive).orElse(false)
+                    );
+                }
+                response.setAuthor(authorResponse);
+
+                Community authorCommunity = post.getAuthorCommunity();
+                CommunityResponse communityResponse = authorCommunity != null ?
+                        modelMapper.map(authorCommunity, CommunityResponse.class) : null;
+                if(communityResponse != null) {
+                    communityResponse.setTags(authorCommunity.getTags().stream().map(Tag::getTitle).toList());
+                    communityResponse.setSubscribed(
+                            currentUser == null || currentUser.getUuid().equals(authorCommunity.getOwner().getUuid()) ?
+                                    null :
+                                    communitySubscriptionRepository.findByFollowerAndFollowing(currentUser, authorCommunity)
+                                            .map(CommunitySubscription::isActive).orElse(false)
+                    );
+                }
+                response.setCommunity(communityResponse);
                 response.setTags(post.getTags().stream().map(Tag::getTitle).toList());
                 response.setLiked(likedPostIds.contains(post.getId()));
                 response.setReported(reportedPostIds.contains(post.getId()));
@@ -456,29 +517,46 @@ public class PostServiceImpl implements PostService {
             Post post = postRepository.findByUuid(postId)
                     .orElseThrow(() -> new ResourceNotFoundException("Post not found with UUID: " + postId));
 
+            User currentUser = isAuthenticated ?
+                    userRepository.findByUuid(authUtil.getPrincipalUuid())
+                            .orElseThrow(() -> new ResourceNotFoundException("Principal user not found")) :
+                    null;
+
             PostResponse response = modelMapper.map(post, PostResponse.class);
-            response.setAuthor(
-                    post.getAuthorUser() != null ?
-                            modelMapper.map(post.getAuthorUser(), UserResponse.class) :
-                            null
-            );
-            response.setCommunity(
-                    post.getAuthorCommunity() != null ?
-                            modelMapper.map(post.getAuthorCommunity(), CommunityResponse.class) :
-                            null
-            );
 
-            if(isAuthenticated) {
-                UUID userId = authUtil.getPrincipalUuid();
+            User authorUser = post.getAuthorUser();
+            UserResponse authorResponse = authorUser != null ? modelMapper.map(authorUser, UserResponse.class) : null;
+            if(authorResponse != null) {
+                authorResponse.setSubscribed(
+                        currentUser == null || currentUser.getUuid().equals(authorUser.getUuid()) ?
+                                null :
+                                subscriptionRepository.findByFollowerAndFollowing(currentUser, authorUser)
+                                        .map(Subscription::isActive).orElse(false)
+                );
+            }
+            response.setAuthor(authorResponse);
 
-                User user = userRepository.findByUuid(userId)
-                        .orElseThrow(() -> new ResourceNotFoundException("Principal user not found"));
-                likeRepository.findByUserAndPost(user, post)
+            Community authorCommunity = post.getAuthorCommunity();
+            CommunityResponse communityResponse = authorCommunity != null ?
+                    modelMapper.map(authorCommunity, CommunityResponse.class) : null;
+            if(communityResponse != null) {
+                communityResponse.setTags(authorCommunity.getTags().stream().map(Tag::getTitle).toList());
+                communityResponse.setSubscribed(
+                        currentUser == null || currentUser.getUuid().equals(authorCommunity.getOwner().getUuid()) ?
+                                null :
+                                communitySubscriptionRepository.findByFollowerAndFollowing(currentUser, authorCommunity)
+                                        .map(CommunitySubscription::isActive).orElse(false)
+                );
+            }
+            response.setCommunity(communityResponse);
+
+            if(currentUser != null) {
+                likeRepository.findByUserAndPost(currentUser, post)
                         .ifPresentOrElse(
                                 (l) -> response.setLiked(l.isActive()),
                                 () -> response.setLiked(false)
                         );
-                response.setReported(reportRepository.existsByUserAndPost(user, post));
+                response.setReported(reportRepository.existsByUserAndPost(currentUser, post));
             }
 
             response.setTags(post.getTags().stream().map(Tag::getTitle).toList());
@@ -570,6 +648,9 @@ public class PostServiceImpl implements PostService {
                 }
             }
 
+            User currentUser = userRepository.findByUuid(authorId)
+                    .orElseThrow(() -> new ServiceException("Principal user not found"));
+
             post.setAuthorUser(user.orElse(null));
             post.setAuthorCommunity(community.orElse(null));
 
@@ -592,15 +673,32 @@ public class PostServiceImpl implements PostService {
             postRepository.save(post);
 
             PostResponse response = modelMapper.map(post, PostResponse.class);
-            response.setAuthor(
-                    post.getAuthorUser() != null ?
-                            modelMapper.map(post.getAuthorUser(), UserResponse.class) :
-                            null
-            );
-            response.setCommunity(
-                    post.getAuthorCommunity() != null ?
-                            modelMapper.map(post.getAuthorCommunity(), CommunityResponse.class) :
-                            null);
+
+            User authorUser = post.getAuthorUser();
+            UserResponse authorResponse = authorUser != null ? modelMapper.map(authorUser, UserResponse.class) : null;
+            if(authorResponse != null) {
+                authorResponse.setSubscribed(
+                        currentUser.getUuid().equals(authorUser.getUuid()) ?
+                                null :
+                                subscriptionRepository.findByFollowerAndFollowing(currentUser, authorUser)
+                                        .map(Subscription::isActive).orElse(false)
+                );
+            }
+            response.setAuthor(authorResponse);
+
+            Community authorCommunity = post.getAuthorCommunity();
+            CommunityResponse communityResponse = authorCommunity != null ?
+                    modelMapper.map(authorCommunity, CommunityResponse.class) : null;
+            if(communityResponse != null) {
+                communityResponse.setTags(authorCommunity.getTags().stream().map(Tag::getTitle).toList());
+                communityResponse.setSubscribed(
+                        currentUser.getUuid().equals(authorCommunity.getOwner().getUuid()) ?
+                                null :
+                                communitySubscriptionRepository.findByFollowerAndFollowing(currentUser, authorCommunity)
+                                        .map(CommunitySubscription::isActive).orElse(false)
+                );
+            }
+            response.setCommunity(communityResponse);
             response.setTags(post.getTags().stream().map(Tag::getTitle).toList());
             return response;
         } catch (ResourceNotFoundException | ForbiddenException | ServiceException ex) {

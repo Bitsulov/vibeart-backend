@@ -6,9 +6,11 @@ import ru.vibeart.api.models.enums.TrustStatus;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 @Schema(description = "Данные сообщества для отображения")
 public class CommunityResponse {
+    private UUID uuid;
     private UserResponse owner;
     private String name;
     private String username;
@@ -20,6 +22,16 @@ public class CommunityResponse {
     private Instant createdAt;
     private TrustStatus trustStatus;
     private List<UserResponse> admins;
+    private List<String> tags;
+    private Boolean isSubscribed;
+
+    @Schema(description = "UUID сообщества", example = "3fa85f64-5717-4562-b3fc-2c963f66afa6")
+    public UUID getUuid() {
+        return uuid;
+    }
+    public void setUuid(UUID uuid) {
+        this.uuid = uuid;
+    }
 
     @Schema(description = "Автор сообщества")
     public UserResponse getOwner() {
@@ -107,5 +119,21 @@ public class CommunityResponse {
     }
     public void setAdmins(List<UserResponse> admins) {
         this.admins = admins;
+    }
+
+    @Schema(description = "Список названий тегов сообщества", example = "[\"landscape\", \"portrait\"]")
+    public List<String> getTags() {
+        return tags;
+    }
+    public void setTags(List<String> tags) {
+        this.tags = tags;
+    }
+
+    @Schema(description = "Подписан ли текущий пользователь на это сообщество.")
+    public Boolean isSubscribed() {
+        return isSubscribed;
+    }
+    public void setSubscribed(Boolean subscribed) {
+        isSubscribed = subscribed;
     }
 }

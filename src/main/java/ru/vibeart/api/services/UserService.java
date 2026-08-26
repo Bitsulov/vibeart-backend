@@ -1,5 +1,7 @@
 package ru.vibeart.api.services;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.web.multipart.MultipartFile;
 import ru.vibeart.api.dtos.user.*;
 
@@ -89,4 +91,29 @@ public interface UserService {
      * @param id UUID пользователя
      */
     void deleteUserByUUID(UUID id);
+
+    /**
+     * Переключает подписку текущего пользователя на другого пользователя.
+     *
+     * @param id UUID пользователя, на которого оформляется или отменяется подписка
+     */
+    void toggleSubscription(UUID id);
+
+    /**
+     * Возвращает постраничный список друзей текущего пользователя — тех, с кем
+     * оформлена взаимная подписка.
+     *
+     * @param pageable параметры пагинации
+     * @return страница с данными друзей
+     */
+    Page<UserResponse> getFriends(Pageable pageable);
+
+    /**
+     * Ищет среди друзей текущего пользователя по имени или имени пользователя (username).
+     *
+     * @param query поисковый запрос
+     * @param pageable параметры пагинации
+     * @return страница с найденными друзьями
+     */
+    Page<UserResponse> getFriendsBySearch(String query, Pageable pageable);
 }
