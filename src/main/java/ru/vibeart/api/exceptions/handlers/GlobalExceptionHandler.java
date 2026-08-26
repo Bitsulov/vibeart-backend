@@ -6,6 +6,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -130,6 +131,19 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<AppError> handleTypeMismatch(MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
         String message = "Invalid value for parameter '" + ex.getName() + "': " + ex.getValue();
+        return buildError(HttpStatus.BAD_REQUEST, message, request.getRequestURI());
+    }
+
+    /**
+     * Отсутствует обязательный параметр запроса (400).
+     *
+     * @param ex исключение об отсутствующем параметре запроса
+     * @param request текущий HTTP-запрос
+     * @return ответ с кодом 400 и описанием отсутствующего параметра
+     */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<AppError> handleMissingParameter(MissingServletRequestParameterException ex, HttpServletRequest request) {
+        String message = "Required request parameter \"" + ex.getParameterName() + "\" is not present";
         return buildError(HttpStatus.BAD_REQUEST, message, request.getRequestURI());
     }
 
