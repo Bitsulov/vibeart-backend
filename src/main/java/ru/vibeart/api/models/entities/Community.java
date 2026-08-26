@@ -1,6 +1,8 @@
 package ru.vibeart.api.models.entities;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import ru.vibeart.api.models.enums.TrustStatus;
 
 import java.time.Instant;
@@ -182,6 +184,7 @@ public class Community extends BaseEntity {
         joinColumns = @JoinColumn(name = "community_id"),
         inverseJoinColumns = @JoinColumn(name = "user_id")
     )
+    @OnDelete(action = OnDeleteAction.CASCADE)
     public List<User> getAdmins() {
         return admins;
     }
