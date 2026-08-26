@@ -6,6 +6,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,9 +18,12 @@ import ru.vibeart.api.exceptions.ConflictException;
 import ru.vibeart.api.exceptions.GoneException;
 import ru.vibeart.api.exceptions.ResourceNotFoundException;
 import ru.vibeart.api.exceptions.UnauthorizedException;
+import ru.vibeart.api.models.entities.Community;
+import ru.vibeart.api.models.entities.Subscription;
 import ru.vibeart.api.models.entities.User;
 import ru.vibeart.api.models.entities.VerificationCode;
 import ru.vibeart.api.models.enums.VerificationCodesType;
+import ru.vibeart.api.repositories.SubscriptionRepository;
 import ru.vibeart.api.repositories.UserRepository;
 import ru.vibeart.api.repositories.VerificationCodeRepository;
 import ru.vibeart.api.services.UserService;
@@ -42,6 +48,7 @@ import java.util.UUID;
 @Service
 public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
+    private final SubscriptionRepository subscriptionRepository;
     private final VerificationCodeRepository verificationCodeRepository;
     private final ModelMapper modelMapper;
     private final AuthUtil authUtil;
@@ -61,13 +68,17 @@ public class UserServiceImpl implements UserService {
      * Конструктор с внедрением зависимостей.
      *
      * @param userRepository репозиторий пользователей
+     * @param subscriptionRepository репозиторий подписок пользователей друг на друга
      * @param verificationCodeRepository репозиторий кодов подтверждения
      * @param modelMapper конвертер для преобразования DTO и сущностей
      * @param authUtil утилита для получения данных текущего аутентифицированного пользователя
      * @param imageUploaderService сервис обработки изображений
+     * @param emailService сервис отправки писем по электронной почте
+     * @param passwordEncoder кодировщик паролей пользователя
      */
     public UserServiceImpl(
             UserRepository userRepository,
+            SubscriptionRepository subscriptionRepository,
             VerificationCodeRepository verificationCodeRepository,
             ModelMapper modelMapper,
             AuthUtil authUtil,
@@ -76,6 +87,7 @@ public class UserServiceImpl implements UserService {
             PasswordEncoder passwordEncoder
     ) {
         this.userRepository = userRepository;
+        this.subscriptionRepository = subscriptionRepository;
         this.verificationCodeRepository = verificationCodeRepository;
         this.modelMapper = modelMapper;
         this.authUtil = authUtil;
@@ -174,7 +186,17 @@ public class UserServiceImpl implements UserService {
             User user = userRepository.findByUuid(id)
                     .orElseThrow(() -> new ResourceNotFoundException("User not found with UUID: " + id));
 
-            return modelMapper.map(user, UserResponse.class);
+            User currentUser = authUtil.getIsAuthenticated() ?
+                    userRepository.findByUuid(authUtil.getPrincipalUuid()).orElse(null) : null;
+
+            UserResponse response = modelMapper.map(user, UserResponse.class);
+            response.setSubscribed(
+                    currentUser == null || currentUser.getUuid().equals(user.getUuid()) ?
+                            null :
+                            subscriptionRepository.findByFollowerAndFollowing(currentUser, user)
+                                    .map(Subscription::isActive).orElse(false)
+            );
+            return response;
         } catch (ResourceNotFoundException ex) {
             throw ex;
         } catch (DataAccessException ex) {
@@ -248,7 +270,7 @@ public class UserServiceImpl implements UserService {
             user.setDescription(userUpdateDetails.getDescription());
 
             final boolean isEmptyAvatar = user.getAvatarUrl() == null || user.getAvatarUrl().isEmpty();
-            String imageUrl = "<empty>";
+            String imageUrl = null;
 
             if(userUpdateDetails.isDeleteAvatar()) {
                 if(!isEmptyAvatar) {
@@ -869,6 +891,216 @@ public class UserServiceImpl implements UserService {
         } catch (Exception ex) {
             log.error("Unexpected error during deleting user for UUID={}", id, ex);
             throw new ServiceException("Unexpected error during deleting", ex);
+        }
+    }
+
+    /**
+     * <h1>Переключение подписки на пользователя</h1>
+     *
+     * <h2>Назначение</h2>
+     * <p>
+     *     Оформляет или отменяет подписку текущего аутентифицированного пользователя
+     *     на другого пользователя, переданного UUID.
+     * </p>
+     *
+     * <h3>Исключения:</h3>
+     * <ul>
+     *     <li>
+     *         Если пользователь пытается подписаться на самого себя, выбрасывается
+     *         {@link IllegalArgumentException} с кодом ответа <b>400</b>
+     *     </li>
+     *     <li>
+     *         Если пользователь не авторизован, выбрасывается {@link UnauthorizedException}
+     *         с кодом ответа <b>401</b>
+     *     </li>
+     *     <li>
+     *         Если пользователь, на которого оформляется подписка, не найден,
+     *         выбрасывается {@link ResourceNotFoundException} с кодом ответа <b>404</b>
+     *     </li>
+     *     <li>
+     *         При ошибке базы данных или любой другой ошибке, выбрасывается {@link ServiceException}
+     *         с кодом ответа <b>500</b>
+     *     </li>
+     * </ul>
+     *
+     * @param id UUID пользователя, на которого оформляется или отменяется подписка
+     * @throws IllegalArgumentException если пользователь пытается подписаться на самого себя
+     * @throws ResourceNotFoundException если пользователь, на которого оформляется подписка, не найден
+     * @throws ServiceException если произошла ошибка базы данных или сервера
+     */
+    @Override
+    @Transactional
+    public void toggleSubscription(UUID id) {
+        UUID userId = authUtil.getPrincipalUuid();
+
+        try {
+            if(id.equals(userId)) {
+                log.warn("Toggle subscription warn: user tries to subscribe to themselves, UUID={}", userId);
+                throw new IllegalArgumentException("You cannot subscribe to yourself");
+            }
+
+            User user = userRepository.findByUuid(userId)
+                    .orElseThrow(() -> {
+                        log.error("Toggle subscription error: principal user not found with UUID={}", userId);
+                        return new ServiceException("Principal user not found");
+                    });
+            User following = userRepository.findWithLockByUuid(id)
+                    .orElseThrow(() -> {
+                        log.warn("Toggle subscription warn: user not found with UUID={}", id);
+                        return new ResourceNotFoundException("User not found");
+                    });
+
+            Subscription subscription = subscriptionRepository
+                    .findByFollowerAndFollowing(user, following)
+                    .orElseGet(() -> {
+                        Subscription newSubscription = new Subscription();
+                        newSubscription.setFollower(user);
+                        newSubscription.setFollowing(following);
+                        newSubscription.setActive(false);
+                        return newSubscription;
+                    });
+
+            if(!subscription.isActive()) {
+                subscription.setActive(true);
+                userRepository.incrementSubscribersCount(following.getId());
+                userRepository.incrementSubscribesCount(user.getId());
+            } else {
+                subscription.setActive(false);
+                userRepository.decrementSubscribersCount(following.getId());
+                userRepository.decrementSubscribesCount(user.getId());
+            }
+
+            subscriptionRepository.save(subscription);
+        } catch (ResourceNotFoundException | ServiceException | IllegalArgumentException ex) {
+            throw ex;
+        } catch (DataAccessException ex) {
+            log.error("Database error during toggling subscription, target UUID={}, user UUID={}", id, userId, ex);
+            throw new ServiceException("Database error toggling subscription", ex);
+        } catch (Exception ex) {
+            log.error("Unexpected error during toggling subscription, target UUID={}, user UUID={}", id, userId, ex);
+            throw new ServiceException("Unexpected error toggling subscription", ex);
+        }
+    }
+
+    /**
+     * <h1>Получение списка друзей текущего пользователя</h1>
+     *
+     * <h2>Назначение</h2>
+     * <p>
+     *     Возвращает постраничный список друзей текущего аутентифицированного пользователя —
+     *     тех, с кем оформлена взаимная подписка.
+     * </p>
+     *
+     * <h3>Исключения:</h3>
+     * <ul>
+     *     <li>
+     *         Если пользователь не авторизован, выбрасывается {@link UnauthorizedException}
+     *         с кодом ответа <b>401</b>
+     *     </li>
+     *     <li>
+     *         При ошибке базы данных или любой другой ошибке, выбрасывается {@link ServiceException}
+     *         с кодом ответа <b>500</b>
+     *     </li>
+     * </ul>
+     *
+     * @param pageable параметры пагинации
+     * @return страница с данными друзей
+     * @throws ServiceException если произошла ошибка базы данных или сервера
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Page<UserResponse> getFriends(Pageable pageable) {
+        UUID userId = authUtil.getPrincipalUuid();
+
+        try {
+            User currentUser = userRepository.findByUuid(userId)
+                    .orElseThrow(() -> {
+                        log.error("Getting friends error: principal user not found with UUID={}", userId);
+                        return new ServiceException("Principal user not found");
+                    });
+
+            Page<User> friends = userRepository.findAllFriends(userId, pageable);
+            return friends.map(friend -> {
+                UserResponse response = modelMapper.map(friend, UserResponse.class);
+                response.setSubscribed(
+                        subscriptionRepository.findByFollowerAndFollowing(currentUser, friend)
+                                .map(Subscription::isActive).orElse(false)
+                );
+                return response;
+            });
+        } catch (ServiceException ex) {
+            throw ex;
+        } catch (DataAccessException ex) {
+            log.error("Database error during getting friends, UUID={}", userId, ex);
+            throw new ServiceException("Database error getting friends", ex);
+        } catch (Exception ex) {
+            log.error("Unexpected error during getting friends, UUID={}", userId, ex);
+            throw new ServiceException("Unexpected error getting friends", ex);
+        }
+    }
+
+    /**
+     * <h1>Поиск среди друзей текущего пользователя</h1>
+     *
+     * <h2>Назначение</h2>
+     * <p>
+     *     Ищет среди друзей текущего аутентифицированного пользователя по имени или имени
+     *     пользователя (username). Если запрос начинается с {@code @}, поиск идёт по имени
+     *     пользователя, иначе выполняется полнотекстовый поиск по имени.
+     * </p>
+     *
+     * <h3>Исключения:</h3>
+     * <ul>
+     *     <li>
+     *         Если пользователь не авторизован, выбрасывается {@link UnauthorizedException}
+     *         с кодом ответа <b>401</b>
+     *     </li>
+     *     <li>
+     *         При ошибке базы данных или любой другой ошибке, выбрасывается {@link ServiceException}
+     *         с кодом ответа <b>500</b>
+     *     </li>
+     * </ul>
+     *
+     * @param query поисковый запрос
+     * @param pageable параметры пагинации
+     * @return страница с найденными друзьями
+     * @throws ServiceException если произошла ошибка базы данных или сервера
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Page<UserResponse> getFriendsBySearch(String query, Pageable pageable) {
+        UUID userId = authUtil.getPrincipalUuid();
+
+        try {
+            User currentUser = userRepository.findByUuid(userId)
+                    .orElseThrow(() -> {
+                        log.error("Searching friends error: principal user not found with UUID={}", userId);
+                        return new ServiceException("Principal user not found");
+                    });
+
+            Pageable unsortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
+            String trimmedQuery = query.trim();
+
+            Page<User> friends = trimmedQuery.startsWith("@") ?
+                    userRepository.searchFriendsByUsername(trimmedQuery.substring(1), userId, unsortedPageable) :
+                    userRepository.searchFriendsFullText(trimmedQuery, userId, unsortedPageable);
+
+            return friends.map(friend -> {
+                UserResponse response = modelMapper.map(friend, UserResponse.class);
+                response.setSubscribed(
+                        subscriptionRepository.findByFollowerAndFollowing(currentUser, friend)
+                                .map(Subscription::isActive).orElse(false)
+                );
+                return response;
+            });
+        } catch (ServiceException ex) {
+            throw ex;
+        } catch (DataAccessException ex) {
+            log.error("Database error during searching friends, UUID={}", userId, ex);
+            throw new ServiceException("Database error searching friends", ex);
+        } catch (Exception ex) {
+            log.error("Unexpected error during searching friends, UUID={}", userId, ex);
+            throw new ServiceException("Unexpected error searching friends", ex);
         }
     }
 }
