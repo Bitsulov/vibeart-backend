@@ -43,6 +43,8 @@ import java.util.UUID;
  *   <li>{@link #incrementLikesCount(Long)} — увеличение счётчика лайков публикации;</li>
  *   <li>{@link #decrementLikesCount(Long)} — уменьшение счётчика лайков публикации;</li>
  *   <li>{@link #incrementReportsCount(Long)} — увеличение счётчика жалоб публикации;</li>
+ *   <li>{@link #incrementCommentsCount(Long)} — увеличение счётчика комментариев публикации;</li>
+ *   <li>{@link #decrementCommentsCount(Long)} — уменьшение счётчика комментариев публикации;</li>
  *   <li>{@link #searchFullText(String, Pageable)} — полнотекстовый поиск публикаций по заголовку и описанию;</li>
  *   <li>{@link #searchFullTextByAuthorUserUuid(String, UUID, UUID, Pageable)} — полнотекстовый поиск публикаций
  *   автора-пользователя с исключением публикаций из указанного альбома;</li>
@@ -186,6 +188,26 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     // UPDATE posts SET reports_count = reports_count + 1 WHERE id =
     @Query("UPDATE Post p SET p.reportsCount = p.reportsCount + 1 WHERE p.id = :id")
     void incrementReportsCount(Long id);
+
+    /**
+     * Увеличивает счётчик комментариев публикации на единицу.
+     *
+     * @param id внутренний идентификатор публикации
+     */
+    @Modifying
+    // UPDATE posts SET comments_count = comments_count + 1 WHERE id =
+    @Query("UPDATE Post p SET p.commentsCount = p.commentsCount + 1 WHERE p.id = :id")
+    void incrementCommentsCount(Long id);
+
+    /**
+     * Уменьшает счётчик комментариев публикации на единицу.
+     *
+     * @param id внутренний идентификатор публикации
+     */
+    @Modifying
+    // UPDATE posts SET comments_count = comments_count - 1 WHERE id =
+    @Query("UPDATE Post p SET p.commentsCount = p.commentsCount - 1 WHERE p.id = :id")
+    void decrementCommentsCount(Long id);
 
     /**
      * Ищет публикации полнотекстовым поиском PostgreSQL по заголовку и описанию,

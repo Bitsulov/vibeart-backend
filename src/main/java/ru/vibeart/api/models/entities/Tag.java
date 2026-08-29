@@ -11,6 +11,11 @@ import java.util.List;
  * Содержит уникальное название {@code title} и дату создания.
  * Наследует автоинкрементный {@code id} от {@link BaseEntity}.
  * </p>
+ * <p>
+ * Поддерживает мягкое удаление через флаг {@code enabled}: отключённый тег не
+ * возвращается в списке/поиске и недоступен для изменения или повторного удаления
+ * через API, но уже существующие ссылки на него у постов и сообществ не затрагиваются.
+ * </p>
  *
  * <h2>Связи</h2>
  * <ul>
@@ -23,6 +28,7 @@ import java.util.List;
 public class Tag extends BaseEntity {
     private String title;
     private Instant createdAt;
+    private boolean enabled;
     private List<Post> posts;
     private List<Community> communities;
 
@@ -42,6 +48,13 @@ public class Tag extends BaseEntity {
     }
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
     }
 
     @ManyToMany(mappedBy = "tags")
