@@ -5,6 +5,7 @@ import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
 
 import java.time.Instant;
+import java.util.UUID;
 
 /**
  * Сущность комментария к посту.
@@ -22,12 +23,21 @@ import java.time.Instant;
 @Entity
 @Table(name = "comments")
 public class Comment extends BaseEntity {
+    private UUID uuid;
     private String text;
     private Post post;
     private User author;
     private Instant createdAt;
 
     public Comment() {}
+
+    @Column(nullable = false, unique = true)
+    public UUID getUuid() {
+        return uuid;
+    }
+    public void setUuid(UUID uuid) {
+        this.uuid = uuid;
+    }
 
     @Column(nullable = false, length = 300)
     public String getText() {
